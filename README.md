@@ -2,14 +2,45 @@
 
 Scan a QR code with WeChat and place phone screenshots or photos directly into the current Codex desktop composer.
 
+It removes the usual detour through WeChat File Transfer, AirDrop, or saving images to the Mac desktop first. Open the app only when you need it, scan once, and keep sending image batches to the same Codex task for 10 minutes.
+
+## Features
+
 - Chinese and English interfaces, following the Mac or phone language by default
 - A multi-image upload queue with thumbnails, file sizes, removal, and progress
+- Multiple upload batches from the same QR-code page during its 10-minute session
 - Up to 12 images per batch, 25 MB per image, and 100 MB total
 - Locks the active Codex composer when the QR code is created
 - If a batch stops partway through, retry only the remaining images
 - Does not send the Codex message
 - Does not inspect or analyze images
 - Does not save images to the project directory
+
+## How It Works
+
+1. Open the target task in Codex.
+2. Open **CodexPhoneUpload** and scan its QR code with WeChat.
+3. Choose one or more screenshots or photos on the phone.
+4. Review the queue, remove unwanted images, and upload.
+5. The images appear in the Codex composer as unsent attachments.
+6. Choose another batch from the same phone page, or return to Codex and add your instructions.
+
+## Screenshots
+
+These are real phone captures from a successful same-Wi-Fi session.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/mobile-empty-zh.png" alt="Chinese upload page ready to choose images" width="260"></td>
+    <td align="center"><img src="docs/images/mobile-success-zh.png" alt="Successful upload with the option to continue" width="260"></td>
+    <td align="center"><img src="docs/images/mobile-queue-en.png" alt="English multi-image upload queue with thumbnails" width="260"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Choose images</strong><br>Chinese interface and target-task confirmation</td>
+    <td align="center"><strong>Continue in batches</strong><br>The queue clears after a successful upload</td>
+    <td align="center"><strong>Review before upload</strong><br>Thumbnails, sizes, removal, and English UI</td>
+  </tr>
+</table>
 
 ## Install in One Command
 
