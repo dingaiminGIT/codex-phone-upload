@@ -2,6 +2,7 @@
 
 import AppKit
 import ApplicationServices
+import CoreImage
 import Foundation
 
 enum PasteError: Error, CustomStringConvertible {
@@ -15,11 +16,12 @@ enum PasteError: Error, CustomStringConvertible {
     case composerFocusFailed
     case attachmentNotConfirmed
     case eventCreationFailed
+    case qrGenerationFailed
 
     var description: String {
         switch self {
         case .usage:
-            return "用法：paste_files.swift [--check-accessibility | --focus-only | --clipboard-only] <图片路径> [...]"
+            return "用法：paste_files.swift [--check-accessibility | --focus-only | --clipboard-only | --generate-qr <内容> <输出路径>] <图片路径> [...]"
         case .fileMissing(let path):
             return "临时图片不存在：\(path)"
         case .imageDecodeFailed(let path):
@@ -38,7 +40,36 @@ enum PasteError: Error, CustomStringConvertible {
             return "图片粘贴后未出现在 Codex 输入框中，请保持目标对话处于打开状态后重试"
         case .eventCreationFailed:
             return "无法创建粘贴键盘事件"
+        case .qrGenerationFailed:
+            return "无法生成上传二维码"
         }
+    }
+}
+
+func generateQRCode(content: String, outputURL: URL) throws {
+    guard let message = content.data(using: .utf8),
+          let filter = CIFilter(name: "CIQRCodeGenerator") else {
+        throw PasteError.qrGenerationFailed
+    }
+    filter.setValue(message, forKey: "inputMessage")
+    filter.setValue("M", forKey: "inputCorrectionLevel")
+    guard let image = filter.outputImage?.transformed(
+        by: CGAffineTransform(scaleX: 9, y: 9)
+    ) else {
+        throw PasteError.qrGenerationFailed
+    }
+    let context = CIContext(options: [.useSoftwareRenderer: false])
+    guard let cgImage = context.createCGImage(image, from: image.extent) else {
+        throw PasteError.qrGenerationFailed
+    }
+    let bitmap = NSBitmapImageRep(cgImage: cgImage)
+    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+        throw PasteError.qrGenerationFailed
+    }
+    do {
+        try png.write(to: outputURL, options: .atomic)
+    } catch {
+        throw PasteError.qrGenerationFailed
     }
 }
 
@@ -202,6 +233,18 @@ func focusComposer(for app: NSRunningApplication) throws -> AXUIElement {
 
 func run() throws {
     var arguments = Array(CommandLine.arguments.dropFirst())
+    let generateQR = arguments.first == "--generate-qr"
+    if generateQR {
+        guard arguments.count == 3 else {
+            throw PasteError.usage
+        }
+        try generateQRCode(
+            content: arguments[1],
+            outputURL: URL(fileURLWithPath: arguments[2]).standardizedFileURL
+        )
+        print("QR_PATH=\(arguments[2])")
+        return
+    }
     let checkAccessibility = arguments.first == "--check-accessibility"
     if checkAccessibility {
         arguments.removeFirst()

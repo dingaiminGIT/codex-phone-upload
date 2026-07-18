@@ -70,7 +70,9 @@ case "$MODE" in
     if [[ -d "$LEGACY_APP" ]]; then
       find "$LEGACY_APP" -depth -delete
     fi
-    /usr/bin/open -n "$INSTALLED_APP"
+    if [[ "${CODEX_PHONE_UPLOAD_SKIP_OPEN:-0}" != "1" ]]; then
+      /usr/bin/open -n "$INSTALLED_APP"
+    fi
     echo "$INSTALLED_APP"
     ;;
   *)

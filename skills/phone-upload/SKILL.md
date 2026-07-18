@@ -20,4 +20,4 @@ description: Start a temporary QR-code upload page that lets a phone or WeChat u
 
 Do not wait for uploads, open uploaded files, analyze their contents, send the composer, or start another Codex task. The phone page uses a private temporary local staging file only long enough to paste the selected images into the current Codex composer, then closes the one-time session after a successful batch. It must not save uploaded images into the project.
 
-If startup fails because `qrencode`, Codex desktop, or macOS Accessibility permission is missing, report the exact dependency error. In remote mode, also report any `cloudflared` error and suggest the default same-Wi-Fi mode. Do not fall back to saving images in the project.
+If startup fails because Codex desktop or macOS Accessibility permission is missing, report the exact dependency error. In remote mode, also report any `cloudflared` error and suggest the default same-Wi-Fi mode. Do not fall back to saving images in the project.

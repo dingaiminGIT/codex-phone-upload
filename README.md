@@ -1,91 +1,190 @@
 # Codex Phone Upload
 
-Scan a one-time QR code on your Mac with WeChat, then place screenshots or photos from your phone directly into the current Codex desktop composer.
+Scan a QR code with WeChat and place phone screenshots or photos directly into the current Codex desktop composer.
 
-- Does not send the message automatically
-- Does not inspect or analyze image contents
+- Up to 12 images per batch, 25 MB per image
+- Does not send the Codex message
+- Does not inspect or analyze images
 - Does not save images to the project directory
-- Supports up to 12 images per batch, with a 25 MB limit per image
 
-This repository provides two ways to use the tool:
+## Install in One Command
 
-1. **macOS app**: Best for everyday use. Open the app whenever you need it and a QR code appears immediately—no Codex conversation needs to be started first.
-2. **Codex Skill**: Invoke `$phone-upload` from the current task when needed. An optional remote mode is also available.
+Requirements: macOS 14 or later, the Codex desktop app, and Xcode Command Line Tools.
 
-## macOS App
-
-### How It Works
-
-The app starts a short-lived HTTP server on your Mac's local network address and generates a randomized, one-time URL. When your phone and Mac are on the same Wi-Fi network, scan the QR code with WeChat and select multiple images. After the upload finishes, the app activates Codex, focuses the current composer, and pastes each image. It reports success to the phone only after confirming that the attachments appeared in the composer, then quits automatically after about three seconds.
-
-The QR code expires after 10 minutes and becomes invalid immediately after one successful batch. The app runs only when opened. It has no persistent menu bar item, fixed phone URL, cloud relay, launch-at-login behavior, or global keyboard shortcut.
-
-### Requirements
-
-- macOS 14 or later
-- Codex desktop app
-- Phone and Mac connected to the same Wi-Fi network
-- Accessibility permission on first use
-- Xcode Command Line Tools (only required when building from source)
-
-### Build, Verify, and Install
+Paste this command into Terminal:
 
 ```bash
-cd menubar
-swift run --jobs 1 CodexPhoneUploadSelfTests
-./script/build_and_run.sh --verify
-./script/build_and_run.sh --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/dingaiminGIT/codex-phone-upload/main/install.sh)"
 ```
 
-The default installation path is `~/Applications/CodexPhoneUpload.app`. After installation, open it on demand from Applications or Spotlight.
+The installer automatically:
 
-## Codex Skill
+1. Downloads or updates the source at `~/.local/share/codex-phone-upload`.
+2. Builds and installs `~/Applications/CodexPhoneUpload.app`.
+3. Installs the `$phone-upload` Skill at `~/.codex/skills/phone-upload`.
+4. Opens the macOS app when installation finishes.
 
-The Skill is located at [`skills/phone-upload`](skills/phone-upload). It uses direct same-Wi-Fi transfer by default. The Cloudflare temporary tunnel is used only when the user explicitly requests `--remote` mode.
+No Homebrew package is required for same-Wi-Fi uploads. You can [review the installer](install.sh) before running it.
 
-To install the Skill manually for your personal Codex setup:
+If Xcode Command Line Tools are missing, macOS will open its installer. Finish that installation, then run the same command again.
 
-```bash
-mkdir -p ~/.codex/skills
-ln -s "$(pwd)/skills/phone-upload" ~/.codex/skills/phone-upload
-```
+## First-Time Setup
 
-Restart Codex, then enter:
+The app needs Accessibility permission to focus the Codex composer and paste attachments.
+
+1. Open **System Settings → Privacy & Security → Accessibility**.
+2. Enable **CodexPhoneUpload**.
+3. Close and reopen the app.
+4. Restart Codex once so it discovers the installed Skill.
+
+This permission is normally required only once. macOS may request it again after the app is rebuilt or upgraded.
+
+If macOS asks whether the app may accept incoming network connections, click **Allow**. This lets the phone reach the temporary upload page over Wi-Fi.
+
+## Everyday Use: Open the App
+
+This is the simplest workflow.
+
+1. Open Codex and select the task that should receive the images.
+2. Keep that task and its composer visible.
+3. Open **CodexPhoneUpload** from Spotlight or Applications.
+4. Scan the QR code with WeChat.
+5. Select up to 12 images on the phone and upload them.
+6. Wait for the phone page to report success.
+7. Return to Codex. The images are attached to the composer but are **not sent**.
+8. Add your instructions and send the message manually when ready.
+
+The app quits automatically about three seconds after a successful upload. It does not stay in the menu bar and does not start at login. Open it again whenever you need another batch.
+
+## Alternative Use: Trigger the Skill in Codex
+
+The one-command installer also installs the Skill. In the target Codex task, enter:
 
 ```text
 $phone-upload Generate a QR code and place images from my phone into the current composer. Do not send or analyze them.
 ```
 
-Local mode also requires `qrencode`:
+Codex displays a QR code and a fallback link. Scan the code, select the images, upload them, and wait for the success message. The images appear as unsent composer attachments.
+
+## Same-Wi-Fi and Remote Modes
+
+The macOS app and the Skill use direct same-Wi-Fi transfer by default. This is the fastest and most reliable option, and images do not pass through a third-party server.
+
+Only the Skill supports optional remote mode. Install `cloudflared` first:
 
 ```bash
-brew install qrencode
+brew install cloudflared
 ```
 
-The repository includes a universal Apple Silicon and Intel build of the paste helper. Rebuild it after changing `paste_files.swift`:
+Then enter:
+
+```text
+$phone-upload Use remote mode. Generate a QR code and place images from my phone into the current composer. Do not send or analyze them.
+```
+
+Remote mode creates a temporary Cloudflare tunnel and can be slower or less reliable than same-Wi-Fi mode.
+
+## Update
+
+Run the same installation command again:
 
 ```bash
-./skills/phone-upload/scripts/build_helper.sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/dingaiminGIT/codex-phone-upload/main/install.sh)"
 ```
 
-Remote mode is optional and requires `cloudflared`. The macOS app intentionally supports only the faster and simpler same-Wi-Fi mode.
+The installer pulls the latest source, rebuilds the app, and refreshes the Skill link. Restart Codex if the Skill changed. A rebuilt app may need Accessibility permission again.
+
+## Troubleshooting
+
+### The phone cannot open the QR-code page
+
+- Confirm that the phone and Mac are on the same Wi-Fi network.
+- Temporarily disable VPNs on the phone and Mac.
+- Avoid guest Wi-Fi networks that isolate connected devices.
+- Allow incoming connections in the macOS firewall prompt.
+- Reopen the app if the QR code is more than 10 minutes old.
+
+### The phone reports success, but Codex has no attachment
+
+- Keep the intended Codex task open and its composer visible.
+- Confirm that **CodexPhoneUpload** is enabled under **System Settings → Privacy & Security → Accessibility**.
+- Run the one-command installer again to update the app.
+- Reopen the app and retry with a new QR code.
+
+### Codex does not recognize `$phone-upload`
+
+Confirm the installed link:
+
+```bash
+ls -ld ~/.codex/skills/phone-upload
+```
+
+Then restart Codex. The macOS app can still be used independently of the Skill.
+
+### The Accessibility prompt appears again
+
+This can happen after rebuilding, replacing, moving, or upgrading the app. Enable the current app again in **System Settings → Privacy & Security → Accessibility**.
+
+## Manual Installation
+
+Use these steps only if you do not want to run the one-command installer.
+
+```bash
+git clone https://github.com/dingaiminGIT/codex-phone-upload.git
+cd codex-phone-upload
+
+# Build and install the app
+cd menubar
+./script/build_and_run.sh --install
+cd ..
+
+# Install the Skill
+mkdir -p ~/.codex/skills
+ln -s "$(pwd)/skills/phone-upload" ~/.codex/skills/phone-upload
+```
+
+Restart Codex after installing the Skill.
+
+## Uninstall
+
+```bash
+rm -rf ~/Applications/CodexPhoneUpload.app
+rm ~/.codex/skills/phone-upload
+rm -rf ~/.local/share/codex-phone-upload
+```
 
 ## Privacy and Security
 
 - Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
-- The service runs only on the current Mac; local mode does not pass through a third-party server.
-- Each page expires after 10 minutes, and the listener stops after one successful batch.
-- Temporary images exist only in the system temporary directory while the Skill is pasting them, or in memory when using the macOS app. They are never written to the current project.
-- The tool uses the macOS Accessibility API to locate the Codex composer, so explicit permission is required on first use.
+- Local sessions expire after 10 minutes and stop after one successful batch.
+- The Skill keeps temporary images only long enough to paste them; the app keeps uploads in memory.
+- Uploaded images are never written to the current project.
+- The tool uses the macOS Accessibility API only to focus the Codex composer and paste attachments.
+- The tool does not send the Codex message and does not analyze uploaded images.
 
 ## Development
+
+Run the parser self-tests and verify the app build:
+
+```bash
+cd menubar
+swift run --jobs 1 CodexPhoneUploadSelfTests
+./script/build_and_run.sh --verify
+```
+
+Rebuild the universal Apple Silicon and Intel helper after changing `paste_files.swift`:
+
+```bash
+./skills/phone-upload/scripts/build_helper.sh
+```
 
 Repository layout:
 
 ```text
 .codex-plugin/          Codex plugin metadata
 skills/phone-upload/    Codex Skill plus Python and Swift helpers
-menubar/                SwiftUI macOS app (directory name retained from the early prototype)
+menubar/                SwiftUI macOS app
+install.sh              One-command installer for the app and Skill
 ```
 
 Licensed under the MIT License.

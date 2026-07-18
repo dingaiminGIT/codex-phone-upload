@@ -11,6 +11,7 @@ COMMON_ARGS=(
   -O
   -framework AppKit
   -framework ApplicationServices
+  -framework CoreImage
   "$SOURCE"
 )
 

@@ -125,6 +125,23 @@ def check_codex_bridge():
         raise RuntimeError(detail or "Codex 输入框粘贴组件不可用")
 
 
+def generate_qr(content, output_path):
+    helper = Path(__file__).with_name("paste_files")
+    if not helper.is_file():
+        raise RuntimeError("缺少二维码生成组件")
+    result = subprocess.run(
+        [str(helper), "--generate-qr", content, str(output_path)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if detail.startswith("ERROR="):
+            detail = detail[6:]
+        raise RuntimeError(detail or "无法生成上传二维码")
+
+
 def free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -457,7 +474,7 @@ def run_server(args):
 
     public_url = public_base + "/upload/" + args.token
     qr_path = session_dir / "upload-qr.png"
-    subprocess.run(["qrencode", "-s", "9", "-m", "2", "-o", str(qr_path), public_url], check=True)
+    generate_qr(public_url, qr_path)
     os.chmod(str(qr_path), 0o600)
     ready_state = dict(initial_state)
     ready_state.update({
@@ -507,7 +524,6 @@ def require_command(name, install_hint):
 
 
 def start_session(args):
-    require_command("qrencode", "请先运行：brew install qrencode")
     if args.remote:
         require_command("cloudflared", "请先运行：brew install cloudflared")
     check_codex_bridge()
