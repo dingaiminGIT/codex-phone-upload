@@ -46,6 +46,16 @@ enum PasteError: Error, CustomStringConvertible {
     }
 }
 
+struct PartialPasteError: Error, CustomStringConvertible {
+    let attached: Int
+    let total: Int
+    let underlying: Error
+
+    var description: String {
+        "PARTIAL_ATTACHED=\(attached);TOTAL=\(total);ERROR=\(underlying)"
+    }
+}
+
 func generateQRCode(content: String, outputURL: URL) throws {
     guard let message = content.data(using: .utf8),
           let filter = CIFilter(name: "CIQRCodeGenerator") else {
@@ -191,9 +201,19 @@ func composerAttachmentCount(in root: AXUIElement, composer: AXUIElement) -> Int
     return count
 }
 
-func focusComposer(for app: NSRunningApplication) throws -> AXUIElement {
+func resolveTarget(for app: NSRunningApplication) throws -> (root: AXUIElement, composer: AXUIElement) {
     let root = AXUIElementCreateApplication(app.processIdentifier)
-    guard let composer = findComposer(in: root) else {
+    guard let windowValue = axAttribute(root, kAXFocusedWindowAttribute),
+          CFGetTypeID(windowValue) == AXUIElementGetTypeID(),
+          let composer = findComposer(in: windowValue as! AXUIElement) else {
+        throw PasteError.composerNotFound
+    }
+    return (root, composer)
+}
+
+func focusComposer(in root: AXUIElement, composer: AXUIElement) throws -> AXUIElement {
+    guard axPoint(composer, kAXPositionAttribute) != nil,
+          axSize(composer, kAXSizeAttribute) != nil else {
         throw PasteError.composerNotFound
     }
     AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -271,9 +291,10 @@ func run() throws {
               let codex = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first else {
             throw PasteError.usage
         }
-        codex.activate(options: [.activateAllWindows])
+        let target = try resolveTarget(for: codex)
+        codex.activate(options: [])
         Thread.sleep(forTimeInterval: 0.35)
-        _ = try focusComposer(for: codex)
+        _ = try focusComposer(in: target.root, composer: target.composer)
         print("COMPOSER_FOCUSED=true")
         return
     }
@@ -311,27 +332,32 @@ func run() throws {
         throw PasteError.accessibilityNotGranted
     }
 
-    codex.activate(options: [.activateAllWindows])
+    let target = try resolveTarget(for: codex)
+    codex.activate(options: [])
     Thread.sleep(forTimeInterval: 0.65)
-    let root = AXUIElementCreateApplication(codex.processIdentifier)
-    var composer = try focusComposer(for: codex)
+    let root = target.root
+    let composer = try focusComposer(in: root, composer: target.composer)
 
-    for url in fileURLs {
-        let countBefore = composerAttachmentCount(in: root, composer: composer)
-        try writeImageToClipboard(url)
-        composer = try focusComposer(for: codex)
-        try postPasteEvent()
-        let deadline = Date().addingTimeInterval(3)
-        var confirmed = false
-        repeat {
-            Thread.sleep(forTimeInterval: 0.15)
-            if composerAttachmentCount(in: root, composer: composer) > countBefore {
-                confirmed = true
-                break
+    for (index, url) in fileURLs.enumerated() {
+        do {
+            let countBefore = composerAttachmentCount(in: root, composer: composer)
+            try writeImageToClipboard(url)
+            _ = try focusComposer(in: root, composer: composer)
+            try postPasteEvent()
+            let deadline = Date().addingTimeInterval(3)
+            var confirmed = false
+            repeat {
+                Thread.sleep(forTimeInterval: 0.15)
+                if composerAttachmentCount(in: root, composer: composer) > countBefore {
+                    confirmed = true
+                    break
+                }
+            } while Date() < deadline
+            guard confirmed else {
+                throw PasteError.attachmentNotConfirmed
             }
-        } while Date() < deadline
-        guard confirmed else {
-            throw PasteError.attachmentNotConfirmed
+        } catch {
+            throw PartialPasteError(attached: index, total: fileURLs.count, underlying: error)
         }
     }
     print("PASTED_FILES=\(fileURLs.count)")

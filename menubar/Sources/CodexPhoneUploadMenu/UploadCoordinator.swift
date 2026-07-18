@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import CodexPhoneUploadCore
 
 @MainActor
 final class UploadCoordinator: ObservableObject {
@@ -13,14 +14,55 @@ final class UploadCoordinator: ObservableObject {
         case expired
     }
 
+    private enum StatusState {
+        case idle
+        case permissionRequired
+        case starting
+        case ready
+        case copied
+        case uploading(Int)
+        case success(Int)
+        case partial(Int, Int)
+        case expired
+        case failure(String)
+    }
+
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var status = "点击生成一次性二维码"
+    @Published private var statusState: StatusState = .idle
+    @Published private(set) var language = AppLanguage.preferred
     @Published private(set) var uploadURL: URL?
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var expiresAt: Date?
+    @Published private(set) var targetName: String?
 
     private var server: LocalUploadServer?
     private let bridge = CodexClipboardBridge()
+
+    var text: AppText { AppText(language: language) }
+
+    var status: String {
+        switch statusState {
+        case .idle: return text.idle
+        case .permissionRequired: return text.permissionRequired
+        case .starting: return text.starting
+        case .ready: return text.waiting
+        case .copied: return text.linkCopied
+        case .uploading(let count): return text.uploading(count: count)
+        case .success(let count): return text.success(count: count)
+        case .partial(let attached, let total): return text.partial(attached: attached, total: total)
+        case .expired: return text.expired
+        case .failure(let message): return message
+        }
+    }
+
+    func setLanguage(_ language: AppLanguage) {
+        guard self.language != language else { return }
+        self.language = language
+        UserDefaults.standard.set(language.rawValue, forKey: AppLanguage.storageKey)
+        if case .failure = statusState {
+            statusState = .failure(text.unavailable)
+        }
+    }
 
     func ensureSession() {
         if phase == .idle || phase == .expired {
@@ -32,16 +74,28 @@ final class UploadCoordinator: ObservableObject {
         stopSession()
         guard CodexClipboardBridge.accessibilityGranted(prompt: true) else {
             phase = .failure
-            status = "请允许辅助功能权限，然后点“换一个”"
+            statusState = .permissionRequired
+            return
+        }
+        do {
+            targetName = try bridge.prepareTarget()
+        } catch let error as CodexClipboardBridge.BridgeError {
+            phase = .failure
+            statusState = .failure(text.bridgeError(error))
+            return
+        } catch {
+            phase = .failure
+            statusState = .failure(error.localizedDescription)
             return
         }
         phase = .starting
-        status = "正在启动同一 Wi-Fi 上传服务…"
+        statusState = .starting
         uploadURL = nil
         qrImage = nil
         expiresAt = nil
 
         let server = LocalUploadServer(
+            targetName: text.targetName(targetName),
             onReady: { [weak self] session in
                 DispatchQueue.main.async {
                     guard let self else { return }
@@ -49,25 +103,35 @@ final class UploadCoordinator: ObservableObject {
                     self.expiresAt = session.expiresAt
                     self.qrImage = QRCodeGenerator.image(for: session.url.absoluteString)
                     self.phase = .ready
-                    self.status = "等待手机上传"
+                    self.statusState = .ready
                 }
             },
-            onState: { [weak self] message in
+            onState: { [weak self] state in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.status = message
-                    if message.contains("过期") {
+                    switch state {
+                    case .expired:
                         self.phase = .expired
-                    } else if message.hasPrefix("已放入") {
+                        self.statusState = .expired
+                    case .uploading(let count):
+                        self.phase = .uploading
+                        self.statusState = .uploading(count)
+                    case .success(let count):
                         self.phase = .success
+                        self.statusState = .success(count)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                             guard self?.phase == .success else { return }
                             self?.quit()
                         }
-                    } else if message.hasPrefix("正在把") {
-                        self.phase = .uploading
-                    } else if message.contains("失败") || message.contains("找不到") || message.contains("请先") || message.contains("没有出现在") {
+                    case .partialFailure(let attached, let total, _):
                         self.phase = .failure
+                        self.statusState = .partial(attached, total)
+                    case .startupFailed(let reason):
+                        self.phase = .failure
+                        self.statusState = .failure(self.text.serverStartFailed(reason))
+                    case .failure(let error):
+                        self.phase = .failure
+                        self.statusState = .failure(self.localized(error))
                     }
                 }
             },
@@ -78,7 +142,7 @@ final class UploadCoordinator: ObservableObject {
                         return
                     }
                     self.phase = .uploading
-                    self.status = "正在把 \(images.count) 张图片放入 Codex…"
+                    self.statusState = .uploading(images.count)
                     do {
                         let count = try self.bridge.paste(images)
                         completion(.success(count))
@@ -93,7 +157,16 @@ final class UploadCoordinator: ObservableObject {
             try server.start()
         } catch {
             phase = .failure
-            status = error.localizedDescription
+            if let serverError = error as? LocalUploadServer.ServerError {
+                switch serverError {
+                case .noLocalAddress:
+                    statusState = .failure(text.noLocalAddress)
+                case .listenerFailed:
+                    statusState = .failure(text.serverStartFailed(""))
+                }
+            } else {
+                statusState = .failure(error.localizedDescription)
+            }
             self.server = nil
         }
     }
@@ -102,7 +175,7 @@ final class UploadCoordinator: ObservableObject {
         guard let uploadURL else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(uploadURL.absoluteString, forType: .string)
-        status = "上传地址已复制"
+        statusState = .copied
     }
 
     func stopSession() {
@@ -119,7 +192,20 @@ final class UploadCoordinator: ObservableObject {
         case unavailable
 
         var errorDescription: String? {
-            "菜单栏工具暂时不可用"
+            AppText(language: AppLanguage.preferred).unavailable
         }
+    }
+
+    private func localized(_ error: Error) -> String {
+        if let partial = error as? CodexClipboardBridge.PartialPasteError {
+            return text.partial(attached: partial.attached, total: partial.total)
+        }
+        if let bridge = error as? CodexClipboardBridge.BridgeError {
+            return text.bridgeError(bridge)
+        }
+        if let validation = error as? UploadValidationError {
+            return text.validationError(validation)
+        }
+        return error.localizedDescription
     }
 }

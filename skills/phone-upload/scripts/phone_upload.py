@@ -2,7 +2,6 @@
 """Create a one-time image upload page that pastes files into Codex."""
 
 import argparse
-import cgi
 import html
 import json
 import mimetypes
@@ -19,6 +18,8 @@ import threading
 import time
 import unicodedata
 from datetime import datetime, timezone
+from email import policy
+from email.parser import BytesParser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,6 +35,13 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"
 URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 STAGING_ROOT = Path(tempfile.gettempdir()) / "codex-phone-upload"
 STAGING_MAX_AGE_SECONDS = 24 * 60 * 60
+
+
+class PartialPasteError(RuntimeError):
+    def __init__(self, attached, total, message):
+        super().__init__(message)
+        self.attached = attached
+        self.total = total
 
 
 def iso_utc(timestamp):
@@ -105,6 +113,9 @@ def paste_into_codex(paths):
         detail = (result.stderr or result.stdout).strip()
         if detail.startswith("ERROR="):
             detail = detail[6:]
+        partial = re.match(r"PARTIAL_ATTACHED=(\d+);TOTAL=(\d+);ERROR=(.*)", detail, re.DOTALL)
+        if partial:
+            raise PartialPasteError(int(partial.group(1)), int(partial.group(2)), partial.group(3).strip())
         raise RuntimeError(detail or "无法把图片粘贴到 Codex 输入框")
 
 
@@ -208,7 +219,7 @@ def sniff_extension(data, original_name):
     return None
 
 
-def upload_page(action_path, project_name, expires_at):
+def _legacy_upload_page(action_path, project_name, expires_at):
     action = html.escape(action_path, quote=True)
     project = html.escape(project_name)
     expires = html.escape(iso_utc(expires_at))
@@ -268,6 +279,24 @@ form.addEventListener('submit', async (event) => {{
 </body></html>"""
 
 
+def upload_page(action_path, project_name, expires_at):
+    template_path = Path(__file__).resolve().parent.parent / "assets" / "mobile-upload.html"
+    template = template_path.read_text(encoding="utf-8")
+    replacements = {
+        "__ACTION__": html.escape(action_path, quote=True),
+        "__TARGET__": html.escape(project_name),
+        "__EXPIRES__": html.escape(iso_utc(expires_at)),
+        "__MAX_FILES__": str(MAX_FILES),
+        "__MAX_FILE_BYTES__": str(MAX_FILE_BYTES),
+        "__MAX_FILE_MB__": str(MAX_FILE_BYTES // (1024 * 1024)),
+        "__MAX_TOTAL_BYTES__": str(MAX_REQUEST_BYTES),
+        "__MAX_TOTAL_MB__": str(MAX_REQUEST_BYTES // (1024 * 1024)),
+    }
+    for placeholder, value in replacements.items():
+        template = template.replace(placeholder, value)
+    return template
+
+
 class UploadServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -279,7 +308,7 @@ class UploadServer(ThreadingHTTPServer):
 
 
 class UploadHandler(BaseHTTPRequestHandler):
-    server_version = "CodexPhoneUpload/0.1"
+    server_version = "CodexPhoneUpload/0.3"
 
     def log_message(self, fmt, *args):
         message = "%s - %s\n" % (self.log_date_time_string(), fmt % args)
@@ -295,6 +324,12 @@ class UploadHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
+
+    def english(self):
+        return not self.headers.get("Accept-Language", "").lower().startswith("zh")
+
+    def message(self, chinese, english):
+        return english if self.english() else chinese
 
     def valid_session(self):
         parsed = urlparse(self.path)
@@ -322,51 +357,57 @@ class UploadHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.valid_session() or self.server.completed:
-            self.send_json(HTTPStatus.GONE, {"error": "上传链接已失效"})
+            self.send_json(HTTPStatus.GONE, {"error": self.message("上传链接已失效", "The upload link has expired")})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
         if length <= 0 or length > MAX_REQUEST_BYTES:
-            self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "上传内容过大或为空"})
+            self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": self.message("上传内容过大或为空", "The upload is empty or exceeds 100 MB")})
             return
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
-            self.send_json(HTTPStatus.BAD_REQUEST, {"error": "请求格式不正确"})
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": self.message("请求格式不正确", "The upload request is malformed")})
             return
 
-        form = cgi.FieldStorage(
-            fp=self.rfile,
-            headers=self.headers,
-            environ={
-                "REQUEST_METHOD": "POST",
-                "CONTENT_TYPE": content_type,
-                "CONTENT_LENGTH": str(length),
-            },
-            keep_blank_values=False,
+        body = self.rfile.read(length)
+        mime_message = BytesParser(policy=policy.default).parsebytes(
+            (
+                "Content-Type: " + content_type + "\r\n"
+                "MIME-Version: 1.0\r\n\r\n"
+            ).encode("utf-8") + body
         )
-        items = form["images"] if "images" in form else []
-        if not isinstance(items, list):
-            items = [items]
+        if not mime_message.is_multipart():
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": self.message("请求格式不正确", "The upload request is malformed")})
+            return
+        items = [
+            part for part in mime_message.iter_parts()
+            if part.get_param("name", header="content-disposition") == "images"
+        ]
         if not items or len(items) > MAX_FILES:
-            self.send_json(HTTPStatus.BAD_REQUEST, {"error": f"请选择 1 到 {MAX_FILES} 张图片"})
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": self.message(f"请选择 1 到 {MAX_FILES} 张图片", f"Choose 1 to {MAX_FILES} images")})
             return
 
         saved = []
         try:
             for index, item in enumerate(items, 1):
-                if not getattr(item, "file", None):
-                    raise ValueError("上传项中没有图片文件")
-                data = item.file.read(MAX_FILE_BYTES + 1)
+                data = item.get_payload(decode=True) or b""
                 if not data:
-                    raise ValueError("图片文件为空")
+                    raise ValueError(self.message("图片文件为空", "The image file is empty"))
                 if len(data) > MAX_FILE_BYTES:
-                    raise ValueError(f"单张图片不能超过 {MAX_FILE_BYTES // (1024 * 1024)} MB")
-                extension = sniff_extension(data[:64], getattr(item, "filename", ""))
+                    raise ValueError(self.message(
+                        f"单张图片不能超过 {MAX_FILE_BYTES // (1024 * 1024)} MB",
+                        f"Each image must be {MAX_FILE_BYTES // (1024 * 1024)} MB or smaller",
+                    ))
+                original_name = item.get_filename() or ""
+                extension = sniff_extension(data[:64], original_name)
                 if extension not in ALLOWED_EXTENSIONS:
-                    raise ValueError("只支持 PNG、JPEG、GIF、WebP、HEIC 和 HEIF 图片")
-                filename = safe_name(getattr(item, "filename", ""), index, extension)
+                    raise ValueError(self.message(
+                        "只支持 PNG、JPEG、GIF、WebP、HEIC 和 HEIF 图片",
+                        "Only PNG, JPEG, GIF, WebP, HEIC, and HEIF images are supported",
+                    ))
+                filename = safe_name(original_name, index, extension)
                 target = Path(self.server.config["save_dir"]) / filename
                 counter = 1
                 while target.exists():
@@ -387,6 +428,26 @@ class UploadHandler(BaseHTTPRequestHandler):
 
         try:
             paste_into_codex(saved)
+        except PartialPasteError as error:
+            for target in saved:
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+            state = dict(self.server.config["state"])
+            state.update({
+                "status": "partial_attach_failed",
+                "failed_at": iso_utc(time.time()),
+                "attached": error.attached,
+                "attachment_count": error.total,
+            })
+            atomic_json(Path(self.server.config["state_path"]), state)
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                "error": self.message("部分图片未能放入 Codex", "Some images could not be attached to Codex"),
+                "attached": error.attached,
+                "total": error.total,
+            })
+            return
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
             for target in saved:
                 try:
@@ -400,7 +461,12 @@ class UploadHandler(BaseHTTPRequestHandler):
                 "error": str(error),
             })
             atomic_json(Path(self.server.config["state_path"]), state)
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(error)})
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                "error": self.message(
+                    str(error),
+                    "Could not attach the images. Keep the target Codex task open and try again.",
+                )
+            })
             return
 
         self.server.completed = True

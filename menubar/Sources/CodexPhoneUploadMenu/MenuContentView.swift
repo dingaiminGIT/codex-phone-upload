@@ -10,13 +10,49 @@ struct MenuContentView: View {
                     .font(.title3)
                     .foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Codex 手机传图")
+                    Text(coordinator.text.appTitle)
                         .font(.body.weight(.semibold))
-                    Text("同一 Wi-Fi · 一次性二维码")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Text(coordinator.text.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 Spacer()
+                Menu {
+                    ForEach(AppLanguage.allCases) { language in
+                        Button {
+                            coordinator.setLanguage(language)
+                        } label: {
+                            if coordinator.language == language {
+                                Label(language.menuLabel, systemImage: "checkmark")
+                            } else {
+                                Text(language.menuLabel)
+                            }
+                        }
+                    }
+                } label: {
+                    Label(coordinator.language.shortLabel, systemImage: "globe")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            if let targetName = coordinator.targetName {
+                HStack(spacing: 6) {
+                    Text(coordinator.text.targetLabel + ":")
+                        .foregroundStyle(.secondary)
+                    Text(coordinator.text.targetName(targetName))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .accessibilityElement(children: .combine)
             }
 
             Group {
@@ -45,6 +81,8 @@ struct MenuContentView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(statusColor)
                 .frame(maxWidth: .infinity)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
 
             if coordinator.phase == .ready, let expiresAt = coordinator.expiresAt {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -55,12 +93,12 @@ struct MenuContentView: View {
             }
 
             HStack {
-                Button("换一个") {
+                Button(coordinator.text.newCode) {
                     coordinator.newSession()
                 }
                 .buttonStyle(.bordered)
 
-                Button("复制链接") {
+                Button(coordinator.text.copyLink) {
                     coordinator.copyUploadURL()
                 }
                 .disabled(coordinator.uploadURL == nil)
@@ -70,18 +108,18 @@ struct MenuContentView: View {
             Divider()
 
             HStack {
-                Text("最多 12 张 · 不发送 · 不分析")
+                Text(coordinator.text.privacySummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("关闭") {
+                Button(coordinator.text.close) {
                     coordinator.quit()
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(14)
-        .frame(width: 276)
+        .frame(width: 300)
         .onAppear {
             coordinator.ensureSession()
         }
@@ -100,6 +138,6 @@ struct MenuContentView: View {
 
     private func remainingText(until date: Date, now: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(now)))
-        return String(format: "%d:%02d 后失效", seconds / 60, seconds % 60)
+        return coordinator.text.remaining(seconds: seconds)
     }
 }

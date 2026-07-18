@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "Codex Phone Upload";
+"NSLocalNetworkUsageDescription" = "Allows a phone on the same Wi-Fi network to attach images to the current Codex composer.";

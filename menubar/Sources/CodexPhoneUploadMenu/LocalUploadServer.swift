@@ -9,14 +9,24 @@ final class LocalUploadServer: @unchecked Sendable {
         let expiresAt: Date
     }
 
+    enum State {
+        case expired
+        case startupFailed(String)
+        case uploading(Int)
+        case success(Int)
+        case partialFailure(attached: Int, total: Int, reason: String)
+        case failure(Error)
+    }
+
     typealias UploadHandler = ([UploadedImage], @escaping (Result<Int, Error>) -> Void) -> Void
 
     private let queue = DispatchQueue(label: "local.dingaimin.CodexPhoneUploadMenu.server")
     private let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     private let ttl: TimeInterval
+    private let targetName: String
     private let onReady: (ReadySession) -> Void
-    private let onState: (String) -> Void
+    private let onState: (State) -> Void
     private let onUpload: UploadHandler
     private var listener: NWListener?
     private var expiryWorkItem: DispatchWorkItem?
@@ -26,11 +36,13 @@ final class LocalUploadServer: @unchecked Sendable {
 
     init(
         ttl: TimeInterval = 10 * 60,
+        targetName: String,
         onReady: @escaping (ReadySession) -> Void,
-        onState: @escaping (String) -> Void,
+        onState: @escaping (State) -> Void,
         onUpload: @escaping UploadHandler
     ) {
         self.ttl = ttl
+        self.targetName = targetName
         self.onReady = onReady
         self.onState = onState
         self.onUpload = onUpload
@@ -50,25 +62,25 @@ final class LocalUploadServer: @unchecked Sendable {
             switch state {
             case .ready:
                 guard let port = listener.port else {
-                    self.onState(ServerError.listenerFailed.localizedDescription)
+                    self.onState(.startupFailed(ServerError.listenerFailed.localizedDescription))
                     return
                 }
                 self.expiresAt = Date().addingTimeInterval(self.ttl)
                 let path = "/upload/\(self.token)"
                 guard let url = URL(string: "http://\(address):\(port.rawValue)\(path)") else {
-                    self.onState(ServerError.listenerFailed.localizedDescription)
+                    self.onState(.startupFailed(ServerError.listenerFailed.localizedDescription))
                     return
                 }
                 self.onReady(ReadySession(url: url, expiresAt: self.expiresAt))
                 let workItem = DispatchWorkItem { [weak self] in
                     guard let self, !self.completed else { return }
-                    self.onState("二维码已过期，请生成新的二维码")
+                    self.onState(.expired)
                     self.stop()
                 }
                 self.expiryWorkItem = workItem
                 self.queue.asyncAfter(deadline: .now() + self.ttl, execute: workItem)
             case .failed(let error):
-                self.onState("上传服务启动失败：\(error.localizedDescription)")
+                self.onState(.startupFailed(error.localizedDescription))
                 self.stop()
             default:
                 break
@@ -97,7 +109,7 @@ final class LocalUploadServer: @unchecked Sendable {
                 nextBuffer.append(data)
             }
             if nextBuffer.count > MultipartParser.maxRequestBytes + 64 * 1024 {
-                self.sendJSON(connection, status: 413, payload: ["error": "上传内容过大"])
+                self.sendJSON(connection, status: 413, payload: ["code": "totalTooLarge", "error": "Upload is too large"])
                 return
             }
 
@@ -156,7 +168,7 @@ final class LocalUploadServer: @unchecked Sendable {
             return
         }
         if method == "GET" {
-            let body = Data(Self.uploadPage(expiresAt: expiresAt).utf8)
+            let body = Data(MobileUploadPage.html(expiresAt: expiresAt, targetName: targetName).utf8)
             send(
                 connection,
                 status: 200,
@@ -175,7 +187,7 @@ final class LocalUploadServer: @unchecked Sendable {
             return
         }
         guard !handlingUpload else {
-            sendJSON(connection, status: 409, payload: ["error": "正在处理上一批图片"])
+            sendJSON(connection, status: 409, payload: ["code": "failure", "error": "An upload is already being processed"])
             return
         }
         let contentType = Self.headerValue("Content-Type", in: headerText) ?? ""
@@ -187,7 +199,7 @@ final class LocalUploadServer: @unchecked Sendable {
         do {
             let images = try MultipartParser.parse(body: body, boundary: boundary)
             handlingUpload = true
-            onState("正在把 \(images.count) 张图片放入 Codex…")
+            onState(.uploading(images.count))
             onUpload(images) { [weak self] result in
                 guard let self else { return }
                 self.queue.async {
@@ -196,18 +208,42 @@ final class LocalUploadServer: @unchecked Sendable {
                     case .success(let count):
                         self.completed = true
                         self.sendJSON(connection, status: 200, payload: ["count": count])
-                        self.onState("已放入 Codex 输入框：\(count) 张")
+                        self.onState(.success(count))
                         self.queue.asyncAfter(deadline: .now() + 1) { [weak self] in
                             self?.stop()
                         }
                     case .failure(let error):
-                        self.sendJSON(connection, status: 500, payload: ["error": error.localizedDescription])
-                        self.onState(error.localizedDescription)
+                        if let partial = error as? CodexClipboardBridge.PartialPasteError,
+                           partial.attached > 0 {
+                            self.sendJSON(
+                                connection,
+                                status: 500,
+                                payload: [
+                                    "code": "partial",
+                                    "error": partial.underlying.localizedDescription,
+                                    "attached": partial.attached,
+                                    "total": partial.total
+                                ]
+                            )
+                            self.onState(
+                                .partialFailure(
+                                    attached: partial.attached,
+                                    total: partial.total,
+                                    reason: partial.underlying.localizedDescription
+                                )
+                            )
+                        } else if let partial = error as? CodexClipboardBridge.PartialPasteError {
+                            self.sendJSON(connection, status: 500, payload: Self.errorPayload(partial.underlying))
+                            self.onState(.failure(partial.underlying))
+                        } else {
+                            self.sendJSON(connection, status: 500, payload: Self.errorPayload(error))
+                            self.onState(.failure(error))
+                        }
                     }
                 }
             }
         } catch {
-            sendJSON(connection, status: 400, payload: ["error": error.localizedDescription])
+            sendJSON(connection, status: 400, payload: Self.errorPayload(error))
         }
     }
 
@@ -295,28 +331,22 @@ final class LocalUploadServer: @unchecked Sendable {
         return candidates.sorted { $0.priority < $1.priority }.first?.address
     }
 
-    private static func uploadPage(expiresAt: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        let expires = formatter.string(from: expiresAt)
-        return """
-        <!doctype html><html lang="zh-CN"><head>
-        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-        <title>上传图片到 Codex 输入框</title>
-        <style>
-        :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#18212f;background:#f4f7fb}
-        body{margin:0}main{max-width:560px;margin:auto;padding:32px 18px}.card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 35px #1a28461a}
-        h1{margin:0 0 8px;font-size:25px}p,small{color:#5d6878;line-height:1.6}input{display:block;width:100%;box-sizing:border-box;margin:20px 0;padding:18px;border:2px dashed #8eb1ef;border-radius:14px;background:#f8fbff}
-        button{width:100%;border:0;border-radius:14px;padding:15px;color:#fff;background:#1769e0;font-size:17px;font-weight:650}button:disabled{opacity:.55}#status{min-height:48px;margin-top:16px;color:#1769e0;line-height:1.5}
-        </style></head><body><main><div class="card"><h1>上传图片</h1>
-        <p>选择手机中的图片，上传后会放进 Mac 当前打开的 Codex 输入框，不会自动发送。</p>
-        <form id="form" method="post" enctype="multipart/form-data"><input name="images" type="file" accept="image/*,.heic,.heif" multiple required><button id="submit">上传到 Codex</button></form>
-        <div id="status"></div><small>一次最多 12 张，每张不超过 25 MB。一次性链接将在 \(expires) 失效。</small>
-        </div></main><script>
-        const f=document.getElementById('form'),b=document.getElementById('submit'),s=document.getElementById('status');
-        f.addEventListener('submit',async e=>{e.preventDefault();b.disabled=true;s.textContent='正在上传并放入 Codex…';try{const r=await fetch(location.pathname,{method:'POST',body:new FormData(f)});const j=await r.json();if(!r.ok)throw new Error(j.error||'上传失败');s.textContent=`上传成功：${j.count} 张图片已放入 Codex 输入框。`;f.style.display='none'}catch(e){s.textContent=e.message||'上传失败，请重试';b.disabled=false}});
-        </script></body></html>
-        """
+    private static func errorPayload(_ error: Error) -> [String: Any] {
+        guard let validation = error as? UploadValidationError else {
+            return ["code": "failure", "error": error.localizedDescription]
+        }
+        switch validation {
+        case .noImages:
+            return ["code": "noImages", "error": validation.localizedDescription]
+        case .tooManyImages:
+            return ["code": "tooMany", "error": validation.localizedDescription]
+        case .imageTooLarge:
+            return ["code": "tooLarge", "error": validation.localizedDescription]
+        case .unsupportedImage:
+            return ["code": "unsupported", "error": validation.localizedDescription]
+        case .malformedRequest:
+            return ["code": "failure", "error": validation.localizedDescription]
+        }
     }
 
     enum ServerError: LocalizedError {

@@ -5,10 +5,37 @@ import CodexPhoneUploadCore
 
 @MainActor
 final class CodexClipboardBridge {
+    private var targetRoot: AXUIElement?
+    private var targetComposer: AXUIElement?
+
     static func accessibilityGranted(prompt: Bool) -> Bool {
         guard prompt else { return AXIsProcessTrusted() }
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+    }
+
+    func prepareTarget() throws -> String? {
+        guard Self.accessibilityGranted(prompt: true) else {
+            throw BridgeError.accessibilityNotGranted
+        }
+        guard let codex = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.openai.codex"
+        ).first else {
+            throw BridgeError.codexNotRunning
+        }
+
+        let root = AXUIElementCreateApplication(codex.processIdentifier)
+        guard let windowValue = attribute(root, kAXFocusedWindowAttribute),
+              CFGetTypeID(windowValue) == AXUIElementGetTypeID() else {
+            throw BridgeError.composerNotFound
+        }
+        let window = windowValue as! AXUIElement
+        guard let composer = findComposer(in: window) else {
+            throw BridgeError.composerNotFound
+        }
+        targetRoot = root
+        targetComposer = composer
+        return text(window, kAXTitleAttribute)
     }
 
     func paste(_ images: [UploadedImage]) throws -> Int {
@@ -21,29 +48,37 @@ final class CodexClipboardBridge {
         ).first else {
             throw BridgeError.codexNotRunning
         }
+        if targetRoot == nil || targetComposer == nil {
+            _ = try prepareTarget()
+        }
+        guard let root = targetRoot, let composer = targetComposer else {
+            throw BridgeError.targetUnavailable
+        }
 
-        codex.activate(options: [.activateAllWindows])
+        codex.activate(options: [])
         Thread.sleep(forTimeInterval: 0.5)
-        let root = AXUIElementCreateApplication(codex.processIdentifier)
-        var composer = try focusComposer(in: root)
 
-        for image in images {
-            let countBefore = attachmentCount(in: root, composer: composer)
-            try writeImageToClipboard(image.data)
-            composer = try focusComposer(in: root)
-            try postPasteEvent()
+        for (index, image) in images.enumerated() {
+            do {
+                let countBefore = attachmentCount(in: root, composer: composer)
+                try writeImageToClipboard(image.data)
+                try focusTargetComposer(in: root, composer: composer)
+                try postPasteEvent()
 
-            let deadline = Date().addingTimeInterval(3)
-            var confirmed = false
-            repeat {
-                Thread.sleep(forTimeInterval: 0.15)
-                if attachmentCount(in: root, composer: composer) > countBefore {
-                    confirmed = true
-                    break
+                let deadline = Date().addingTimeInterval(3)
+                var confirmed = false
+                repeat {
+                    Thread.sleep(forTimeInterval: 0.15)
+                    if attachmentCount(in: root, composer: composer) > countBefore {
+                        confirmed = true
+                        break
+                    }
+                } while Date() < deadline
+                guard confirmed else {
+                    throw BridgeError.attachmentNotConfirmed
                 }
-            } while Date() < deadline
-            guard confirmed else {
-                throw BridgeError.attachmentNotConfirmed
+            } catch {
+                throw PartialPasteError(attached: index, total: images.count, underlying: error)
             }
         }
         return images.count
@@ -76,14 +111,15 @@ final class CodexClipboardBridge {
         keyUp.post(tap: .cghidEventTap)
     }
 
-    private func focusComposer(in root: AXUIElement) throws -> AXUIElement {
-        guard let composer = findComposer(in: root) else {
-            throw BridgeError.composerNotFound
+    private func focusTargetComposer(in root: AXUIElement, composer: AXUIElement) throws {
+        guard point(composer, kAXPositionAttribute) != nil,
+              size(composer, kAXSizeAttribute) != nil else {
+            throw BridgeError.targetUnavailable
         }
         AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         Thread.sleep(forTimeInterval: 0.15)
         if focusedRole(in: root) == "AXTextArea" {
-            return composer
+            return
         }
 
         if let position = point(composer, kAXPositionAttribute),
@@ -112,7 +148,6 @@ final class CodexClipboardBridge {
         guard focusedRole(in: root) == "AXTextArea" else {
             throw BridgeError.composerFocusFailed
         }
-        return composer
     }
 
     private func findComposer(in root: AXUIElement) -> AXUIElement? {
@@ -201,11 +236,25 @@ final class CodexClipboardBridge {
         return value as AnyObject?
     }
 
+    struct PartialPasteError: LocalizedError {
+        let attached: Int
+        let total: Int
+        let underlying: Error
+
+        var errorDescription: String? {
+            if attached > 0 {
+                return "Attached \(attached) of \(total): \(underlying.localizedDescription)"
+            }
+            return underlying.localizedDescription
+        }
+    }
+
     enum BridgeError: LocalizedError {
         case accessibilityNotGranted
         case codexNotRunning
         case composerNotFound
         case composerFocusFailed
+        case targetUnavailable
         case imageDecodeFailed
         case clipboardWriteFailed
         case eventCreationFailed
@@ -221,6 +270,8 @@ final class CodexClipboardBridge {
                 return "找不到当前 Codex 对话的输入框，请先打开目标任务"
             case .composerFocusFailed:
                 return "无法聚焦当前 Codex 对话的输入框"
+            case .targetUnavailable:
+                return "目标 Codex 输入框已经关闭或改变，请重新生成二维码"
             case .imageDecodeFailed:
                 return "无法读取上传的图片"
             case .clipboardWriteFailed:

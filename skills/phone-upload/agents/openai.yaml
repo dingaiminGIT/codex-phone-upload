@@ -1,4 +1,4 @@
 interface:
-  display_name: "手机扫码传图"
-  short_description: "同一 Wi-Fi 秒开二维码，把手机图片放进 Codex 输入框"
+  display_name: "Phone Upload"
+  short_description: "Scan a QR code and attach phone images to the Codex composer"
   default_prompt: "Use $phone-upload in fast same-Wi-Fi mode to generate a QR code and paste selected phone images into the current Codex composer without sending or analyzing them."

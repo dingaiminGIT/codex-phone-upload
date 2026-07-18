@@ -2,7 +2,11 @@
 
 Scan a QR code with WeChat and place phone screenshots or photos directly into the current Codex desktop composer.
 
-- Up to 12 images per batch, 25 MB per image
+- Chinese and English interfaces, following the Mac or phone language by default
+- A multi-image upload queue with thumbnails, file sizes, removal, and progress
+- Up to 12 images per batch, 25 MB per image, and 100 MB total
+- Locks the active Codex composer when the QR code is created
+- If a batch stops partway through, retry only the remaining images
 - Does not send the Codex message
 - Does not inspect or analyze images
 - Does not save images to the project directory
@@ -55,6 +59,10 @@ This is the simplest workflow.
 8. Add your instructions and send the message manually when ready.
 
 The app quits automatically about three seconds after a successful upload. It does not stay in the menu bar and does not start at login. Open it again whenever you need another batch.
+
+The Mac app and phone page automatically use Simplified Chinese when the system or browser language starts with Chinese; otherwise they use English. Use the language menu to switch between **中文** and **English** manually.
+
+Before uploading, the phone page shows each selected image, its file size, and a remove action. It rejects batches over 12 images, individual images over 25 MB, or a combined size over 100 MB before transfer begins.
 
 ## Alternative Use: Trigger the Skill in Codex
 
@@ -157,6 +165,7 @@ rm -rf ~/.local/share/codex-phone-upload
 
 - Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
 - Local sessions expire after 10 minutes and stop after one successful batch.
+- The app locks the active Codex composer when it creates the QR code instead of silently choosing a different task later.
 - The Skill keeps temporary images only long enough to paste them; the app keeps uploads in memory.
 - Uploaded images are never written to the current project.
 - The tool uses the macOS Accessibility API only to focus the Codex composer and paste attachments.
@@ -177,6 +186,8 @@ Rebuild the universal Apple Silicon and Intel helper after changing `paste_files
 ```bash
 ./skills/phone-upload/scripts/build_helper.sh
 ```
+
+For mobile layout checks, append `?preview=queue` to an active upload URL. This shows a disabled six-image fixture and never uploads it.
 
 Repository layout:
 
