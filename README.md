@@ -58,7 +58,7 @@ This is the simplest workflow.
 7. Return to Codex. The images are attached to the composer but are **not sent**.
 8. Add your instructions and send the message manually when ready.
 
-The app quits automatically about three seconds after a successful upload. It does not stay in the menu bar and does not start at login. Open it again whenever you need another batch.
+The same QR-code page accepts multiple batches until its 10-minute link expires. After each successful batch, the phone queue clears so you can choose more images. The app does not stay in the menu bar or start at login; close it when you finish.
 
 The Mac app and phone page automatically use Simplified Chinese when the system or browser language starts with Chinese; otherwise they use English. Use the language menu to switch between **中文** and **English** manually.
 
@@ -164,7 +164,7 @@ rm -rf ~/.local/share/codex-phone-upload
 ## Privacy and Security
 
 - Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
-- Local sessions expire after 10 minutes and stop after one successful batch.
+- Local app sessions expire after 10 minutes and can accept multiple batches during that window. Skill sessions still stop after one successful batch.
 - The app locks the active Codex composer when it creates the QR code instead of silently choosing a different task later.
 - The Skill keeps temporary images only long enough to paste them; the app keeps uploads in memory.
 - Uploaded images are never written to the current project.

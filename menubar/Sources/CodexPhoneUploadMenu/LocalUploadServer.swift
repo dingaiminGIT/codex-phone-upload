@@ -30,7 +30,6 @@ final class LocalUploadServer: @unchecked Sendable {
     private let onUpload: UploadHandler
     private var listener: NWListener?
     private var expiryWorkItem: DispatchWorkItem?
-    private var completed = false
     private var handlingUpload = false
     private var expiresAt = Date()
 
@@ -73,7 +72,7 @@ final class LocalUploadServer: @unchecked Sendable {
                 }
                 self.onReady(ReadySession(url: url, expiresAt: self.expiresAt))
                 let workItem = DispatchWorkItem { [weak self] in
-                    guard let self, !self.completed else { return }
+                    guard let self else { return }
                     self.onState(.expired)
                     self.stop()
                 }
@@ -163,7 +162,7 @@ final class LocalUploadServer: @unchecked Sendable {
             send(connection, status: 204, contentType: "text/plain", body: Data())
             return
         }
-        guard path == expectedPath, Date() < expiresAt, !completed else {
+        guard path == expectedPath, Date() < expiresAt else {
             send(connection, status: 410, contentType: "text/plain; charset=utf-8", body: Data("上传链接已失效".utf8))
             return
         }
@@ -176,7 +175,7 @@ final class LocalUploadServer: @unchecked Sendable {
                 body: body,
                 extraHeaders: [
                     "Cache-Control": "no-store",
-                    "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+                    "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' blob: data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
                     "X-Content-Type-Options": "nosniff"
                 ]
             )
@@ -206,12 +205,8 @@ final class LocalUploadServer: @unchecked Sendable {
                     self.handlingUpload = false
                     switch result {
                     case .success(let count):
-                        self.completed = true
                         self.sendJSON(connection, status: 200, payload: ["count": count])
                         self.onState(.success(count))
-                        self.queue.asyncAfter(deadline: .now() + 1) { [weak self] in
-                            self?.stop()
-                        }
                     case .failure(let error):
                         if let partial = error as? CodexClipboardBridge.PartialPasteError,
                            partial.attached > 0 {

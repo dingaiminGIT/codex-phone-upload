@@ -117,12 +117,8 @@ final class UploadCoordinator: ObservableObject {
                         self.phase = .uploading
                         self.statusState = .uploading(count)
                     case .success(let count):
-                        self.phase = .success
+                        self.phase = .ready
                         self.statusState = .success(count)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                            guard self?.phase == .success else { return }
-                            self?.quit()
-                        }
                     case .partialFailure(let attached, let total, _):
                         self.phase = .failure
                         self.statusState = .partial(attached, total)

@@ -37,10 +37,10 @@ struct AppText {
     let language: AppLanguage
 
     var appTitle: String { value("Codex 手机传图", "Codex Phone Upload") }
-    var subtitle: String { value("同一 Wi-Fi · 一次性二维码", "Same Wi-Fi · one-time QR code") }
+    var subtitle: String { value("同一 Wi-Fi · 10 分钟内可连续上传", "Same Wi-Fi · upload for 10 minutes") }
     var targetLabel: String { value("目标任务", "Target task") }
     var currentTask: String { value("当前 Codex 任务", "Current Codex task") }
-    var idle: String { value("点击生成一次性二维码", "Generate a one-time QR code") }
+    var idle: String { value("点击生成临时二维码", "Generate a temporary QR code") }
     var permissionRequired: String {
         value("请允许辅助功能权限，然后点“重新生成”", "Allow Accessibility access, then choose “New code”")
     }
@@ -73,7 +73,10 @@ struct AppText {
     }
 
     func success(count: Int) -> String {
-        value("已放入 Codex 输入框：\(count) 张", "Attached to the Codex composer: \(count)")
+        value(
+            "已放入 \(count) 张，可继续从手机选择图片",
+            "Attached \(count). You can keep choosing images on your phone"
+        )
     }
 
     func partial(attached: Int, total: Int) -> String {
