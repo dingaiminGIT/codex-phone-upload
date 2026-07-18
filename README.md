@@ -1,34 +1,34 @@
 # Codex Phone Upload
 
-用微信扫描 Mac 上的一次性二维码，把手机截图或照片直接放进当前 Codex 桌面应用的输入框。
+Scan a one-time QR code on your Mac with WeChat, then place screenshots or photos from your phone directly into the current Codex desktop composer.
 
-- 不自动发送消息
-- 不读取或分析图片内容
-- 不把图片保存到项目目录
-- 一次最多 12 张，每张不超过 25 MB
+- Does not send the message automatically
+- Does not inspect or analyze image contents
+- Does not save images to the project directory
+- Supports up to 12 images per batch, with a 25 MB limit per image
 
-仓库同时提供两种入口：
+This repository provides two ways to use the tool:
 
-1. **macOS 小工具**：适合日常使用。需要时打开应用即生成二维码，不需要先发起 Codex 对话。
-2. **Codex Skill**：适合在当前任务中用 `$phone-upload` 临时唤起，也保留可选的公网模式。
+1. **macOS app**: Best for everyday use. Open the app whenever you need it and a QR code appears immediately—no Codex conversation needs to be started first.
+2. **Codex Skill**: Invoke `$phone-upload` from the current task when needed. An optional remote mode is also available.
 
-## macOS 小工具
+## macOS App
 
-### 工作方式
+### How It Works
 
-小工具会在 Mac 的局域网地址上启动一个短期 HTTP 服务，生成随机的一次性地址。手机与 Mac 在同一 Wi-Fi 时，微信扫码即可多选图片。上传成功后，工具会激活 Codex、聚焦当前输入框并逐张粘贴，只有检测到附件出现在输入框后才向手机报告成功，随后约 3 秒自动退出。
+The app starts a short-lived HTTP server on your Mac's local network address and generates a randomized, one-time URL. When your phone and Mac are on the same Wi-Fi network, scan the QR code with WeChat and select multiple images. After the upload finishes, the app activates Codex, focuses the current composer, and pastes each image. It reports success to the phone only after confirming that the attachments appeared in the composer, then quits automatically after about three seconds.
 
-二维码 10 分钟过期，成功上传一批图片后立即失效。应用只在需要时打开，不设菜单栏常驻、固定手机网址、云端中转、开机自启或全局快捷键。
+The QR code expires after 10 minutes and becomes invalid immediately after one successful batch. The app runs only when opened. It has no persistent menu bar item, fixed phone URL, cloud relay, launch-at-login behavior, or global keyboard shortcut.
 
-### 系统要求
+### Requirements
 
-- macOS 14 或更高版本
-- Codex 桌面应用
-- 手机与 Mac 连接同一 Wi-Fi
-- 首次使用时授予“辅助功能”权限
-- Xcode Command Line Tools（仅源码构建需要）
+- macOS 14 or later
+- Codex desktop app
+- Phone and Mac connected to the same Wi-Fi network
+- Accessibility permission on first use
+- Xcode Command Line Tools (only required when building from source)
 
-### 构建、验证和安装
+### Build, Verify, and Install
 
 ```bash
 cd menubar
@@ -37,55 +37,55 @@ swift run --jobs 1 CodexPhoneUploadSelfTests
 ./script/build_and_run.sh --install
 ```
 
-安装目标默认为 `~/Applications/CodexPhoneUpload.app`。以后从“应用程序”或 Spotlight 按需启动即可。
+The default installation path is `~/Applications/CodexPhoneUpload.app`. After installation, open it on demand from Applications or Spotlight.
 
 ## Codex Skill
 
-Skill 位于 [`skills/phone-upload`](skills/phone-upload)。默认使用同一 Wi-Fi 的局域网直传；只有用户明确要求时才使用 `--remote` 和 Cloudflare 临时隧道。
+The Skill is located at [`skills/phone-upload`](skills/phone-upload). It uses direct same-Wi-Fi transfer by default. The Cloudflare temporary tunnel is used only when the user explicitly requests `--remote` mode.
 
-手动安装到个人 Codex：
+To install the Skill manually for your personal Codex setup:
 
 ```bash
 mkdir -p ~/.codex/skills
 ln -s "$(pwd)/skills/phone-upload" ~/.codex/skills/phone-upload
 ```
 
-重新打开 Codex 后，可以输入：
+Restart Codex, then enter:
 
 ```text
-$phone-upload 生成二维码，把手机图片放进当前输入框，不要发送，也不要分析。
+$phone-upload Generate a QR code and place images from my phone into the current composer. Do not send or analyze them.
 ```
 
-Skill 的局域网模式还需要：
+Local mode also requires `qrencode`:
 
 ```bash
 brew install qrencode
 ```
 
-仓库自带 Apple Silicon 和 Intel 通用的粘贴辅助程序。修改 `paste_files.swift` 后可重新构建：
+The repository includes a universal Apple Silicon and Intel build of the paste helper. Rebuild it after changing `paste_files.swift`:
 
 ```bash
 ./skills/phone-upload/scripts/build_helper.sh
 ```
 
-公网模式是可选能力，需要额外安装 `cloudflared`。macOS 小工具刻意只提供更快、更简单的同一 Wi-Fi 模式。
+Remote mode is optional and requires `cloudflared`. The macOS app intentionally supports only the faster and simpler same-Wi-Fi mode.
 
-## 隐私与安全
+## Privacy and Security
 
-- 上传 URL 含 64 位十六进制随机令牌，不使用固定入口。
-- 服务只存在于当前 Mac；局域网模式不经过第三方服务器。
-- 页面设置 10 分钟有效期，成功一批后停止监听。
-- 临时图片只在粘贴期间进入系统临时目录（Skill）或内存（macOS 小工具），不会进入当前项目。
-- 工具通过 macOS 辅助功能 API 定位 Codex 输入框，因此首次使用必须获得用户授权。
+- Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
+- The service runs only on the current Mac; local mode does not pass through a third-party server.
+- Each page expires after 10 minutes, and the listener stops after one successful batch.
+- Temporary images exist only in the system temporary directory while the Skill is pasting them, or in memory when using the macOS app. They are never written to the current project.
+- The tool uses the macOS Accessibility API to locate the Codex composer, so explicit permission is required on first use.
 
-## 开发
+## Development
 
-目录结构：
+Repository layout:
 
 ```text
-.codex-plugin/          Codex 插件元数据
-skills/phone-upload/    Codex Skill 与 Python/Swift 辅助程序
-menubar/                SwiftUI macOS 小工具（目录名沿用早期原型）
+.codex-plugin/          Codex plugin metadata
+skills/phone-upload/    Codex Skill plus Python and Swift helpers
+menubar/                SwiftUI macOS app (directory name retained from the early prototype)
 ```
 
-项目使用 MIT License。
+Licensed under the MIT License.
