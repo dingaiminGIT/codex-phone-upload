@@ -1,0 +1,34 @@
+{
+  "name": "codex-phone-upload",
+  "version": "0.2.0",
+  "description": "Generate a fast same-Wi-Fi QR code and paste phone images into the current Codex composer as unsent attachments, with optional remote mode.",
+  "author": {
+    "name": "dingaimin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "phone",
+    "image",
+    "upload",
+    "qr-code",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "\u624b\u673a\u626b\u7801\u4f20\u56fe",
+    "shortDescription": "\u540c\u4e00 Wi-Fi \u79d2\u5f00\u4e8c\u7ef4\u7801\uff0c\u628a\u624b\u673a\u56fe\u7247\u653e\u8fdb Codex \u8f93\u5165\u6846",
+    "longDescription": "\u9ed8\u8ba4\u4f7f\u7528\u540c\u4e00 Wi-Fi \u7684\u5c40\u57df\u7f51\u76f4\u4f20\uff0c\u5feb\u901f\u751f\u6210\u4e00\u6b21\u6027\u4e8c\u7ef4\u7801\uff1b\u4e5f\u53ef\u663e\u5f0f\u4f7f\u7528\u516c\u7f51\u6a21\u5f0f\u3002\u5728\u5fae\u4fe1\u4e2d\u9009\u62e9\u56fe\u7247\uff0c\u5e76\u50cf\u7535\u8111\u76f4\u63a5\u7c98\u8d34\u4e00\u6837\u653e\u5165\u5f53\u524d Codex \u8f93\u5165\u6846\u3002\u63d2\u4ef6\u4e0d\u4f1a\u81ea\u52a8\u53d1\u9001\u3001\u8bfb\u53d6\u6216\u5206\u6790\u56fe\u7247\uff0c\u4e5f\u4e0d\u4f1a\u628a\u56fe\u7247\u4fdd\u5b58\u5230\u9879\u76ee\u76ee\u5f55\u3002",
+    "developerName": "dingaimin",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "\u7528\u540c\u4e00 Wi-Fi \u6781\u901f\u6a21\u5f0f\u751f\u6210\u4e8c\u7ef4\u7801\uff0c\u8ba9\u6211\u4ece\u624b\u673a\u4e0a\u4f20\u56fe\u7247\u5230\u5f53\u524d Codex \u8f93\u5165\u6846\uff0c\u4e0d\u8981\u53d1\u9001\uff0c\u4e5f\u4e0d\u8981\u5206\u6790\u56fe\u7247\u3002"
+    ],
+    "brandColor": "#1769E0",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

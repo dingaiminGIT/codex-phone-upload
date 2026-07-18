@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>CodexPhoneUpload</string>
+  <key>CFBundleIdentifier</key>
+  <string>local.dingaimin.CodexPhoneUpload</string>
+  <key>CFBundleName</key>
+  <string>Codex 手机传图</string>
+  <key>CFBundleDisplayName</key>
+  <string>Codex 手机传图</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.2.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>用于让同一 Wi-Fi 下的手机把图片传入当前 Codex 输入框。</string>
+</dict>
+</plist>
