@@ -25,6 +25,7 @@ fi
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_CONTENTS/Info.plist"
+cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
 find "$ROOT_DIR/Resources" -mindepth 1 -maxdepth 1 -type d -name '*.lproj' -exec cp -R {} "$APP_RESOURCES/" \;
 chmod +x "$APP_BINARY"
 /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
