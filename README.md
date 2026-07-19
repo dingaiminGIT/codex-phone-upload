@@ -192,6 +192,7 @@ Restart Codex after installing the Skill.
 rm -rf ~/Applications/CodexPhoneUpload.app
 rm ~/.codex/skills/phone-upload
 rm -rf ~/.local/share/codex-phone-upload
+rm -rf ~/Library/Application\ Support/CodexPhoneUpload
 ```
 
 ## Contributors
@@ -201,11 +202,13 @@ rm -rf ~/.local/share/codex-phone-upload
 
 ## Privacy and Security
 
-- Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
+- Upload URLs contain a high-entropy random token and never use a fixed endpoint.
 - Same-Wi-Fi mode uses unencrypted HTTP and is intended only for trusted local networks; remote mode uses an HTTPS Cloudflare tunnel.
 - Local app sessions expire after 10 minutes and can accept multiple batches during that window. Skill sessions still stop after one successful batch.
 - The app locks the active Codex composer when it creates the QR code instead of silently choosing a different task later.
-- The Skill keeps temporary images only long enough to paste them; the app keeps uploads in memory.
+- The Skill accepts temporary images only inside its dedicated system staging root, deletes each batch after pasting, and rejects cleanup paths outside that root. The app keeps uploads in memory.
+- Skill session metadata, QR codes, and logs are stored under the current user's private `~/Library/Application Support/CodexPhoneUpload` directory, not inside the project.
+- Before stopping a Skill server, the tool verifies the process command, state-file path, and per-session random identifier instead of trusting a saved PID alone.
 - Uploaded images are never written to the current project.
 - The tool uses the macOS Accessibility API only to focus the Codex composer and paste attachments.
 - The tool does not send the Codex message and does not analyze uploaded images.

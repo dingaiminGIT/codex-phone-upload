@@ -3,6 +3,7 @@ import http.client
 import importlib.util
 import io
 import json
+import subprocess
 import tempfile
 import threading
 import time
@@ -38,7 +39,9 @@ def multipart_body(files, boundary="codex-test-boundary"):
 class RunningUploadServer:
     def __init__(self, root, expires_at=None):
         self.root = Path(root)
-        self.save_dir = self.root / "staging" / "session"
+        self.original_staging_root = phone_upload.STAGING_ROOT
+        phone_upload.STAGING_ROOT = self.root / "staging"
+        self.save_dir = phone_upload.STAGING_ROOT / "session"
         self.save_dir.mkdir(parents=True)
         self.state_path = self.root / "session.json"
         self.request_log = self.root / "requests.log"
@@ -82,6 +85,7 @@ class RunningUploadServer:
             self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        phone_upload.STAGING_ROOT = self.original_staging_root
 
 
 class PhoneUploadTests(unittest.TestCase):
@@ -93,13 +97,38 @@ class PhoneUploadTests(unittest.TestCase):
 
     def test_cleanup_staging_dir_removes_tree_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
-            staging = Path(temporary) / "session"
-            staging.mkdir()
+            staging_root = Path(temporary) / "staging"
+            staging = staging_root / "session"
+            staging.mkdir(parents=True)
             (staging / "image.png").write_bytes(PNG)
 
-            self.assertTrue(phone_upload.cleanup_staging_dir(staging))
-            self.assertFalse(staging.exists())
-            self.assertTrue(phone_upload.cleanup_staging_dir(staging))
+            with mock.patch.object(phone_upload, "STAGING_ROOT", staging_root):
+                self.assertTrue(phone_upload.cleanup_staging_dir(staging))
+                self.assertFalse(staging.exists())
+                self.assertTrue(phone_upload.cleanup_staging_dir(staging))
+
+    def test_cleanup_rejects_root_external_nested_and_symlink_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging_root = root / "staging"
+            staging_root.mkdir()
+            external = root / "external"
+            external.mkdir()
+            (external / "keep.txt").write_text("keep", encoding="utf-8")
+            nested = staging_root / "session" / "nested"
+            nested.mkdir(parents=True)
+            linked = staging_root / "linked"
+            linked.symlink_to(external, target_is_directory=True)
+
+            with mock.patch.object(phone_upload, "STAGING_ROOT", staging_root):
+                self.assertFalse(phone_upload.cleanup_staging_dir(staging_root))
+                self.assertFalse(phone_upload.cleanup_staging_dir(external))
+                self.assertFalse(phone_upload.cleanup_staging_dir(nested))
+                self.assertFalse(phone_upload.cleanup_staging_dir(linked))
+
+            self.assertTrue((external / "keep.txt").is_file())
+            self.assertTrue(nested.is_dir())
+            self.assertTrue(linked.is_symlink())
 
     def test_successful_upload_removes_staged_images(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -216,12 +245,14 @@ class PhoneUploadTests(unittest.TestCase):
                 mode="local",
                 local_ip="127.0.0.1",
                 token="expiry-token",
+                session_nonce="expiry-nonce",
             )
 
             def fake_qr(_, output_path):
                 Path(output_path).write_bytes(PNG)
 
-            with mock.patch.object(phone_upload, "generate_qr", side_effect=fake_qr):
+            with mock.patch.object(phone_upload, "STAGING_ROOT", root / "staging"), \
+                 mock.patch.object(phone_upload, "generate_qr", side_effect=fake_qr):
                 phone_upload.run_server(args)
 
             self.assertFalse(save_dir.exists())
@@ -242,9 +273,11 @@ class PhoneUploadTests(unittest.TestCase):
                 mode="local",
                 local_ip="127.0.0.1",
                 token="failure-token",
+                session_nonce="failure-nonce",
             )
 
-            with mock.patch.object(phone_upload, "generate_qr", side_effect=RuntimeError("QR failed")):
+            with mock.patch.object(phone_upload, "STAGING_ROOT", root / "staging"), \
+                 mock.patch.object(phone_upload, "generate_qr", side_effect=RuntimeError("QR failed")):
                 with self.assertRaisesRegex(RuntimeError, "QR failed"):
                     phone_upload.run_server(args)
 
@@ -264,21 +297,90 @@ class PhoneUploadTests(unittest.TestCase):
     def test_stop_session_removes_recorded_staging_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
-            state_path = project / ".codex" / "phone-upload" / "session.json"
-            save_dir = project / "private-staging"
-            save_dir.mkdir()
+            state_root = project / "private-state"
+            staging_root = project / "staging"
+            save_dir = staging_root / "session"
+            save_dir.mkdir(parents=True)
             (save_dir / "image.png").write_bytes(PNG)
-            phone_upload.atomic_json(state_path, {
+
+            with mock.patch.object(phone_upload, "SESSION_STATE_ROOT", state_root), \
+                 mock.patch.object(phone_upload, "STAGING_ROOT", staging_root):
+                state_path = phone_upload.state_path_for_project(project)
+                phone_upload.atomic_json(state_path, {
+                    "status": "ready",
+                    "pid": -1,
+                    "save_dir": str(save_dir),
+                })
+                with contextlib.redirect_stdout(io.StringIO()):
+                    phone_upload.stop_session(SimpleNamespace(project=str(project)))
+
+                self.assertFalse(save_dir.exists())
+                self.assertEqual(phone_upload.read_state(state_path)["status"], "stopped")
+
+    def test_malicious_legacy_state_cannot_delete_external_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            project.mkdir()
+            external = Path(temporary) / "external"
+            external.mkdir()
+            keep = external / "keep.txt"
+            keep.write_text("keep", encoding="utf-8")
+            legacy_state = phone_upload.legacy_state_path_for_project(project)
+            phone_upload.atomic_json(legacy_state, {
                 "status": "ready",
                 "pid": -1,
-                "save_dir": str(save_dir),
+                "save_dir": str(external),
             })
 
-            with contextlib.redirect_stdout(io.StringIO()):
+            with mock.patch.object(phone_upload, "SESSION_STATE_ROOT", Path(temporary) / "state"), \
+                 mock.patch.object(phone_upload, "STAGING_ROOT", Path(temporary) / "staging"), \
+                 contextlib.redirect_stdout(io.StringIO()):
                 phone_upload.stop_session(SimpleNamespace(project=str(project)))
 
-            self.assertFalse(save_dir.exists())
-            self.assertEqual(phone_upload.read_state(state_path)["status"], "stopped")
+            self.assertEqual(keep.read_text(encoding="utf-8"), "keep")
+
+    def test_unrelated_pid_is_never_terminated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = Path(temporary) / "session.json"
+            process = subprocess.Popen(["/bin/sleep", "30"])
+            try:
+                phone_upload.atomic_json(state_path, {
+                    "status": "ready",
+                    "pid": process.pid,
+                    "session_nonce": "not-this-process",
+                })
+                self.assertFalse(phone_upload.stop_state_process(state_path))
+                self.assertIsNone(process.poll())
+            finally:
+                process.terminate()
+                process.wait(timeout=2)
+
+    def test_process_identity_requires_state_path_and_nonce(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = Path(temporary) / "session.json"
+            script_path = str(phone_upload.SCRIPT_PATH) if hasattr(phone_upload, "SCRIPT_PATH") else str(SCRIPT_PATH)
+            staging_root = Path(temporary) / "staging"
+            save_dir = staging_root / "session"
+            matching = (
+                f"/usr/bin/python3 {script_path} serve --project /tmp/project "
+                f"--state {state_path.resolve()} --save-dir {save_dir.resolve()} "
+                "--session-nonce expected-session-nonce --token secret"
+            )
+            state = {
+                "pid": 123,
+                "session_nonce": "expected-session-nonce",
+                "save_dir": str(save_dir),
+            }
+            with mock.patch.object(phone_upload, "STAGING_ROOT", staging_root), \
+                 mock.patch.object(phone_upload, "process_command", return_value=matching):
+                self.assertTrue(phone_upload.state_process_matches(123, state_path, state))
+                self.assertFalse(phone_upload.state_process_matches(
+                    123, state_path, {
+                        "pid": 123,
+                        "session_nonce": "wrong-session-nonce-value",
+                        "save_dir": str(save_dir),
+                    }
+                ))
 
 
 if __name__ == "__main__":

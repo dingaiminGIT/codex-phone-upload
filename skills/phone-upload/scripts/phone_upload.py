@@ -2,6 +2,7 @@
 """Create a one-time image upload page that pastes files into Codex."""
 
 import argparse
+import hashlib
 import html
 import json
 import mimetypes
@@ -35,6 +36,7 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"
 URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 STAGING_ROOT = Path(tempfile.gettempdir()) / "codex-phone-upload"
 STAGING_MAX_AGE_SECONDS = 24 * 60 * 60
+SESSION_STATE_ROOT = Path.home() / "Library" / "Application Support" / "CodexPhoneUpload" / "skill-sessions"
 
 
 class PartialPasteError(RuntimeError):
@@ -73,10 +75,47 @@ def read_state(path):
         return {}
 
 
+def process_command(pid):
+    if not process_alive(pid):
+        return ""
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def state_process_matches(pid, state_path, state=None):
+    state = state if state is not None else read_state(state_path)
+    command = process_command(pid)
+    if not command:
+        return False
+    try:
+        nonce = state.get("session_nonce")
+        save_dir = validated_staging_dir(state.get("save_dir", ""))
+        if not isinstance(nonce, str) or len(nonce) < 20 or save_dir is None:
+            return False
+        script_path = Path(__file__).resolve()
+        resolved_state_path = Path(state_path).expanduser().resolve()
+        return all((
+            f"{script_path} serve " in command,
+            f"--state {resolved_state_path} --save-dir {save_dir} " in command,
+            f"--session-nonce {nonce} --token " in command,
+        ))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def stop_state_process(state_path):
     state = read_state(state_path)
     pid = state.get("pid")
-    if not process_alive(pid):
+    if not process_alive(pid) or not state_process_matches(pid, state_path, state):
         return False
     try:
         os.kill(pid, signal.SIGTERM)
@@ -85,7 +124,15 @@ def stop_state_process(state_path):
     deadline = time.time() + 3
     while time.time() < deadline and process_alive(pid):
         time.sleep(0.1)
-    return True
+    if process_alive(pid) and state_process_matches(pid, state_path, state):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        deadline = time.time() + 1
+        while time.time() < deadline and process_alive(pid):
+            time.sleep(0.05)
+    return not process_alive(pid)
 
 
 def terminate_process(process, timeout=5):
@@ -102,9 +149,26 @@ def terminate_process(process, timeout=5):
         pass
 
 
-def cleanup_staging_dir(path):
+def validated_staging_dir(path):
     try:
-        shutil.rmtree(Path(path))
+        candidate_input = Path(path).expanduser()
+        if not candidate_input.is_absolute() or candidate_input.is_symlink():
+            return None
+        root = STAGING_ROOT.expanduser().resolve()
+        candidate = candidate_input.resolve()
+        if candidate == root or candidate.parent != root:
+            return None
+        return candidate
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def cleanup_staging_dir(path):
+    candidate = validated_staging_dir(path)
+    if candidate is None:
+        return False
+    try:
+        shutil.rmtree(candidate)
         return True
     except FileNotFoundError:
         return True
@@ -119,9 +183,32 @@ def clean_old_staging():
     for child in STAGING_ROOT.iterdir():
         try:
             if child.is_dir() and child.stat().st_mtime < cutoff:
-                shutil.rmtree(child)
+                cleanup_staging_dir(child)
         except OSError:
             pass
+
+
+def session_root_for_project(project):
+    project = Path(project).expanduser().resolve()
+    project_id = hashlib.sha256(str(project).encode("utf-8")).hexdigest()[:24]
+    return SESSION_STATE_ROOT / project_id
+
+
+def state_path_for_project(project):
+    return session_root_for_project(project) / "session.json"
+
+
+def legacy_state_path_for_project(project):
+    return Path(project).expanduser().resolve() / ".codex" / "phone-upload" / "session.json"
+
+
+def prepare_session_root(project):
+    SESSION_STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(SESSION_STATE_ROOT), 0o700)
+    session_root = session_root_for_project(project)
+    session_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(session_root), 0o700)
+    return session_root
 
 
 def paste_into_codex(paths):
@@ -334,7 +421,7 @@ class UploadServer(ThreadingHTTPServer):
 
 
 class UploadHandler(BaseHTTPRequestHandler):
-    server_version = "CodexPhoneUpload/0.3.3"
+    server_version = "CodexPhoneUpload/0.3.4"
 
     def log_message(self, fmt, *args):
         message = "%s - %s\n" % (self.log_date_time_string(), fmt % args)
@@ -519,7 +606,9 @@ class UploadHandler(BaseHTTPRequestHandler):
 def run_server(args):
     project = Path(args.project).expanduser().resolve()
     state_path = Path(args.state).expanduser().resolve()
-    save_dir = Path(args.save_dir).expanduser().resolve()
+    save_dir = validated_staging_dir(args.save_dir)
+    if save_dir is None:
+        raise RuntimeError("拒绝使用临时目录根目录之外的上传目录")
     session_dir = state_path.parent
     clean_old_staging()
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -537,6 +626,7 @@ def run_server(args):
         "save_dir": str(save_dir),
         "expires_at": iso_utc(expires_at),
         "port": args.port,
+        "session_nonce": args.session_nonce,
     }
     atomic_json(state_path, initial_state)
 
@@ -633,15 +723,17 @@ def start_session(args):
     if project == Path(project.anchor):
         raise RuntimeError("拒绝把文件保存到文件系统根目录")
 
-    session_root = project / ".codex" / "phone-upload"
-    state_path = session_root / "session.json"
-    session_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(str(session_root), 0o700)
+    session_root = prepare_session_root(project)
+    state_path = state_path_for_project(project)
     stop_state_process(state_path)
+    stop_state_process(legacy_state_path_for_project(project))
 
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
-    save_dir = STAGING_ROOT / session_id
+    save_dir = validated_staging_dir(STAGING_ROOT / session_id)
+    if save_dir is None:
+        raise RuntimeError("无法创建安全的临时上传目录")
     token = secrets.token_urlsafe(32)
+    session_nonce = secrets.token_urlsafe(24)
     port = free_port()
     mode = "remote" if args.remote else "local"
     local_ip = "" if args.remote else local_ipv4()
@@ -654,6 +746,7 @@ def start_session(args):
         "--project", str(project),
         "--state", str(state_path),
         "--save-dir", str(save_dir),
+        "--session-nonce", session_nonce,
         "--token", token,
         "--port", str(port),
         "--expires-at", str(expires_at),
@@ -670,6 +763,7 @@ def start_session(args):
         "expires_at": iso_utc(expires_at),
         "port": port,
         "mode": mode,
+        "session_nonce": session_nonce,
     })
 
     deadline = time.time() + (20 if args.remote else 5)
@@ -701,11 +795,19 @@ def start_session(args):
 
 def stop_session(args):
     project = Path(args.project).expanduser().resolve()
-    state_path = project / ".codex" / "phone-upload" / "session.json"
-    stopped = stop_state_process(state_path)
-    state = read_state(state_path)
-    if state.get("save_dir"):
-        cleanup_staging_dir(state["save_dir"])
+    state_path = state_path_for_project(project)
+    legacy_state_path = legacy_state_path_for_project(project)
+    stopped = False
+    state = {}
+    for candidate in (state_path, legacy_state_path):
+        candidate_state = read_state(candidate)
+        if not candidate_state:
+            continue
+        stopped = stop_state_process(candidate) or stopped
+        if candidate_state.get("save_dir"):
+            cleanup_staging_dir(candidate_state["save_dir"])
+        if candidate == state_path:
+            state = candidate_state
     if state:
         state["status"] = "stopped"
         state["stopped_at"] = iso_utc(time.time())
@@ -715,8 +817,10 @@ def stop_session(args):
 
 def show_status(args):
     project = Path(args.project).expanduser().resolve()
-    state_path = project / ".codex" / "phone-upload" / "session.json"
+    state_path = state_path_for_project(project)
     state = read_state(state_path)
+    if not state:
+        state = read_state(legacy_state_path_for_project(project))
     if not state:
         print("STATUS=none")
         return
@@ -737,6 +841,7 @@ def parse_args():
     serve.add_argument("--project", required=True)
     serve.add_argument("--state", required=True)
     serve.add_argument("--save-dir", required=True)
+    serve.add_argument("--session-nonce", default="")
     serve.add_argument("--token", required=True)
     serve.add_argument("--port", required=True, type=int)
     serve.add_argument("--expires-at", required=True, type=float)
