@@ -192,6 +192,11 @@ rm ~/.codex/skills/phone-upload
 rm -rf ~/.local/share/codex-phone-upload
 ```
 
+## Contributors
+
+- [@dingaiminGIT](https://github.com/dingaiminGIT) — creator and maintainer
+- [@codex](https://github.com/codex) — AI coding collaborator
+
 ## Privacy and Security
 
 - Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
