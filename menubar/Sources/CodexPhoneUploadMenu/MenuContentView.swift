@@ -14,7 +14,7 @@ struct MenuContentView: View {
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
-                    Text(coordinator.text.subtitle)
+                    Text(coordinator.text.subtitle(mode: coordinator.mode))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -41,6 +41,22 @@ struct MenuContentView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
+
+            Picker(
+                coordinator.text.modeLabel,
+                selection: Binding(
+                    get: { coordinator.mode },
+                    set: { coordinator.setMode($0) }
+                )
+            ) {
+                ForEach(UploadMode.allCases) { mode in
+                    Text(coordinator.text.modeName(mode)).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(coordinator.phase == .uploading)
+            .accessibilityLabel(coordinator.text.modeLabel)
 
             if let targetName = coordinator.targetName {
                 HStack(spacing: 6) {

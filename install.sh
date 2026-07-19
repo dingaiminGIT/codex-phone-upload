@@ -16,6 +16,31 @@ fail() {
   exit 1
 }
 
+warn() {
+  printf '\nWarning: %s\n' "$1" >&2
+}
+
+cloudflared_installed() {
+  command -v cloudflared >/dev/null 2>&1 || \
+    [[ -x /opt/homebrew/bin/cloudflared ]] || \
+    [[ -x /usr/local/bin/cloudflared ]]
+}
+
+install_cloudflared_if_possible() {
+  if cloudflared_installed; then
+    info "Cloudflare public mode is ready"
+    return
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    info "Installing cloudflared for optional public HTTPS mode"
+    if ! brew install cloudflared; then
+      warn "cloudflared could not be installed. Same-Wi-Fi mode will still work; run 'brew install cloudflared' later to enable public mode."
+    fi
+  else
+    warn "Homebrew is not installed, so cloudflared was skipped. Same-Wi-Fi mode will work; public HTTPS mode needs cloudflared."
+  fi
+}
+
 [[ "$(uname -s)" == "Darwin" ]] || fail "Codex Phone Upload currently supports macOS only."
 command -v git >/dev/null 2>&1 || fail "Git is required. Install Xcode Command Line Tools, then run this command again."
 
@@ -39,6 +64,8 @@ else
   [[ -d "$SOURCE_DIR/menubar" && -d "$SOURCE_DIR/skills/phone-upload" ]] || \
     fail "CODEX_PHONE_UPLOAD_SOURCE does not point to a valid checkout."
 fi
+
+install_cloudflared_if_possible
 
 if [[ -e "$SKILL_LINK" && ! -L "$SKILL_LINK" ]]; then
   fail "$SKILL_LINK already exists and is not a symbolic link. Move it aside and retry."

@@ -24,23 +24,28 @@ final class LocalUploadServer: @unchecked Sendable {
     private let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     private let ttl: TimeInterval
+    private let mode: UploadMode
     private let targetName: String
     private let onReady: (ReadySession) -> Void
     private let onState: (State) -> Void
     private let onUpload: UploadHandler
     private var listener: NWListener?
+    private var tunnel: CloudflareTunnel?
     private var expiryWorkItem: DispatchWorkItem?
     private var handlingUpload = false
     private var expiresAt = Date()
+    private var published = false
 
     init(
         ttl: TimeInterval = 10 * 60,
+        mode: UploadMode,
         targetName: String,
         onReady: @escaping (ReadySession) -> Void,
         onState: @escaping (State) -> Void,
         onUpload: @escaping UploadHandler
     ) {
         self.ttl = ttl
+        self.mode = mode
         self.targetName = targetName
         self.onReady = onReady
         self.onState = onState
@@ -48,8 +53,13 @@ final class LocalUploadServer: @unchecked Sendable {
     }
 
     func start() throws {
-        guard let address = Self.localIPv4Address() else {
+        let localAddress = Self.localIPv4Address()
+        if mode == .local, localAddress == nil {
             throw ServerError.noLocalAddress
+        }
+        let cloudflared = mode == .remote ? CloudflareTunnel.locateExecutable() : nil
+        if mode == .remote, cloudflared == nil {
+            throw CloudflareTunnel.TunnelError.notInstalled
         }
         let listener = try NWListener(using: .tcp, on: .any)
         self.listener = listener
@@ -64,20 +74,17 @@ final class LocalUploadServer: @unchecked Sendable {
                     self.onState(.startupFailed(ServerError.listenerFailed.localizedDescription))
                     return
                 }
-                self.expiresAt = Date().addingTimeInterval(self.ttl)
                 let path = "/upload/\(self.token)"
-                guard let url = URL(string: "http://\(address):\(port.rawValue)\(path)") else {
-                    self.onState(.startupFailed(ServerError.listenerFailed.localizedDescription))
-                    return
+                if self.mode == .local {
+                    guard let localAddress,
+                          let url = URL(string: "http://\(localAddress):\(port.rawValue)\(path)") else {
+                        self.onState(.startupFailed(ServerError.listenerFailed.localizedDescription))
+                        return
+                    }
+                    self.publish(url: url)
+                } else if let cloudflared {
+                    self.startTunnel(executableURL: cloudflared, port: port.rawValue, path: path)
                 }
-                self.onReady(ReadySession(url: url, expiresAt: self.expiresAt))
-                let workItem = DispatchWorkItem { [weak self] in
-                    guard let self else { return }
-                    self.onState(.expired)
-                    self.stop()
-                }
-                self.expiryWorkItem = workItem
-                self.queue.asyncAfter(deadline: .now() + self.ttl, execute: workItem)
             case .failed(let error):
                 self.onState(.startupFailed(error.localizedDescription))
                 self.stop()
@@ -91,8 +98,58 @@ final class LocalUploadServer: @unchecked Sendable {
     func stop() {
         expiryWorkItem?.cancel()
         expiryWorkItem = nil
+        tunnel?.stop()
+        tunnel = nil
         listener?.cancel()
         listener = nil
+        published = false
+    }
+
+    private func startTunnel(executableURL: URL, port: UInt16, path: String) {
+        let tunnel = CloudflareTunnel(executableURL: executableURL)
+        self.tunnel = tunnel
+        do {
+            try tunnel.start(
+                localPort: port,
+                onReady: { [weak self, weak tunnel] baseURL in
+                    guard let self, let tunnel else { return }
+                    self.queue.async {
+                        guard self.tunnel === tunnel,
+                              let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else { return }
+                        self.publish(url: url)
+                    }
+                },
+                onFailure: { [weak self, weak tunnel] error in
+                    guard let self, let tunnel else { return }
+                    self.queue.async {
+                        guard self.tunnel === tunnel else { return }
+                        if self.published {
+                            self.onState(.failure(error))
+                        } else {
+                            self.onState(.startupFailed(error.localizedDescription))
+                        }
+                        self.stop()
+                    }
+                }
+            )
+        } catch {
+            onState(.startupFailed(error.localizedDescription))
+            stop()
+        }
+    }
+
+    private func publish(url: URL) {
+        guard !published else { return }
+        published = true
+        expiresAt = Date().addingTimeInterval(ttl)
+        onReady(ReadySession(url: url, expiresAt: expiresAt))
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.onState(.expired)
+            self.stop()
+        }
+        expiryWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + ttl, execute: workItem)
     }
 
     private func handle(_ connection: NWConnection) {
@@ -167,7 +224,7 @@ final class LocalUploadServer: @unchecked Sendable {
             return
         }
         if method == "GET" {
-            let body = Data(MobileUploadPage.html(expiresAt: expiresAt, targetName: targetName).utf8)
+            let body = Data(MobileUploadPage.html(expiresAt: expiresAt, targetName: targetName, mode: mode).utf8)
             send(
                 connection,
                 status: 200,

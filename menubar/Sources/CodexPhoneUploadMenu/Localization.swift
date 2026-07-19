@@ -37,14 +37,35 @@ struct AppText {
     let language: AppLanguage
 
     var appTitle: String { value("Codex 手机传图", "Codex Phone Upload") }
-    var subtitle: String { value("可信 Wi-Fi · 10 分钟内可连续上传", "Trusted Wi-Fi · upload for 10 minutes") }
+    func subtitle(mode: UploadMode) -> String {
+        switch mode {
+        case .local:
+            return value("可信 Wi-Fi · 10 分钟内可连续上传", "Trusted Wi-Fi · upload for 10 minutes")
+        case .remote:
+            return value("公网 HTTPS · 10 分钟临时链接", "Public HTTPS · temporary 10-minute link")
+        }
+    }
+    var modeLabel: String { value("连接方式", "Connection mode") }
+    func modeName(_ mode: UploadMode) -> String {
+        switch mode {
+        case .local: return value("同一 Wi-Fi", "Same Wi-Fi")
+        case .remote: return value("公网 HTTPS", "Public HTTPS")
+        }
+    }
     var targetLabel: String { value("目标任务", "Target task") }
     var currentTask: String { value("当前 Codex 任务", "Current Codex task") }
     var idle: String { value("点击生成临时二维码", "Generate a temporary QR code") }
     var permissionRequired: String {
         value("请允许辅助功能权限，然后点“重新生成”", "Allow Accessibility access, then choose “New code”")
     }
-    var starting: String { value("正在启动同一 Wi-Fi 上传服务…", "Starting the same-Wi-Fi upload service…") }
+    func starting(mode: UploadMode) -> String {
+        switch mode {
+        case .local:
+            return value("正在启动同一 Wi-Fi 上传服务…", "Starting the same-Wi-Fi upload service…")
+        case .remote:
+            return value("正在创建 Cloudflare 公网 HTTPS 链接…", "Creating a Cloudflare public HTTPS link…")
+        }
+    }
     var waiting: String { value("等待手机上传", "Waiting for phone upload") }
     var linkCopied: String { value("上传地址已复制", "Upload link copied") }
     var expired: String { value("二维码已过期，请重新生成", "QR code expired. Generate a new one") }
@@ -92,6 +113,26 @@ struct AppText {
 
     var noLocalAddress: String {
         value("找不到 Mac 的局域网地址，请确认已经连接 Wi-Fi", "No local Mac address found. Check the Wi-Fi connection")
+    }
+
+    func tunnelError(_ error: CloudflareTunnel.TunnelError) -> String {
+        switch error {
+        case .notInstalled:
+            return value(
+                "公网模式需要 cloudflared。请运行 brew install cloudflared 后重试",
+                "Public mode needs cloudflared. Run brew install cloudflared, then try again"
+            )
+        case .timedOut:
+            return value(
+                "Cloudflare 公网链接创建超时，公司网络可能阻止了隧道",
+                "Cloudflare link creation timed out. The network may be blocking the tunnel"
+            )
+        case .exited:
+            return value(
+                "Cloudflare 公网连接已中断，请重新生成二维码",
+                "The Cloudflare connection stopped. Generate a new QR code"
+            )
+        }
     }
 
     func bridgeError(_ error: CodexClipboardBridge.BridgeError) -> String {

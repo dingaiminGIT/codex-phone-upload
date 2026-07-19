@@ -30,6 +30,7 @@ final class UploadCoordinator: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private var statusState: StatusState = .idle
     @Published private(set) var language = AppLanguage.preferred
+    @Published private(set) var mode: UploadMode = .local
     @Published private(set) var uploadURL: URL?
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var expiresAt: Date?
@@ -37,6 +38,7 @@ final class UploadCoordinator: ObservableObject {
 
     private var server: LocalUploadServer?
     private let bridge = CodexClipboardBridge()
+    private var sessionGeneration = UUID()
 
     var text: AppText { AppText(language: language) }
 
@@ -44,7 +46,7 @@ final class UploadCoordinator: ObservableObject {
         switch statusState {
         case .idle: return text.idle
         case .permissionRequired: return text.permissionRequired
-        case .starting: return text.starting
+        case .starting: return text.starting(mode: mode)
         case .ready: return text.waiting
         case .copied: return text.linkCopied
         case .uploading(let count): return text.uploading(count: count)
@@ -64,6 +66,12 @@ final class UploadCoordinator: ObservableObject {
         }
     }
 
+    func setMode(_ mode: UploadMode) {
+        guard self.mode != mode else { return }
+        self.mode = mode
+        newSession()
+    }
+
     func ensureSession() {
         if phase == .idle || phase == .expired {
             newSession()
@@ -71,6 +79,8 @@ final class UploadCoordinator: ObservableObject {
     }
 
     func newSession() {
+        sessionGeneration = UUID()
+        let generation = sessionGeneration
         stopSession()
         guard CodexClipboardBridge.accessibilityGranted(prompt: true) else {
             phase = .failure
@@ -95,10 +105,11 @@ final class UploadCoordinator: ObservableObject {
         expiresAt = nil
 
         let server = LocalUploadServer(
+            mode: mode,
             targetName: text.targetName(targetName),
             onReady: { [weak self] session in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.sessionGeneration == generation else { return }
                     self.uploadURL = session.url
                     self.expiresAt = session.expiresAt
                     self.qrImage = QRCodeGenerator.image(for: session.url.absoluteString)
@@ -108,7 +119,7 @@ final class UploadCoordinator: ObservableObject {
             },
             onState: { [weak self] state in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.sessionGeneration == generation else { return }
                     switch state {
                     case .expired:
                         self.phase = .expired
@@ -133,7 +144,7 @@ final class UploadCoordinator: ObservableObject {
             },
             onUpload: { [weak self] images, completion in
                 DispatchQueue.main.async {
-                    guard let self else {
+                    guard let self, self.sessionGeneration == generation else {
                         completion(.failure(CoordinatorError.unavailable))
                         return
                     }
@@ -160,6 +171,8 @@ final class UploadCoordinator: ObservableObject {
                 case .listenerFailed:
                     statusState = .failure(text.serverStartFailed(""))
                 }
+            } else if let tunnelError = error as? CloudflareTunnel.TunnelError {
+                statusState = .failure(text.tunnelError(tunnelError))
             } else {
                 statusState = .failure(error.localizedDescription)
             }
@@ -201,6 +214,9 @@ final class UploadCoordinator: ObservableObject {
         }
         if let validation = error as? UploadValidationError {
             return text.validationError(validation)
+        }
+        if let tunnel = error as? CloudflareTunnel.TunnelError {
+            return text.tunnelError(tunnel)
         }
         return error.localizedDescription
     }

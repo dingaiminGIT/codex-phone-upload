@@ -9,6 +9,7 @@ It removes the usual detour through WeChat File Transfer, AirDrop, or saving ima
 - Chinese and English interfaces, following the Mac or phone language by default
 - A multi-image upload queue with thumbnails, file sizes, removal, and progress
 - Multiple upload batches from the same QR-code page during its 10-minute session
+- Same-Wi-Fi mode by default, with an explicit public HTTPS fallback for isolated company or guest networks
 - Up to 12 images per batch, 25 MB per image, and 100 MB total
 - Locks the active Codex composer when the QR code is created
 - If a batch stops partway through, retry only the remaining images
@@ -57,9 +58,10 @@ The installer automatically:
 1. Downloads or updates the source at `~/.local/share/codex-phone-upload`.
 2. Builds and installs `~/Applications/CodexPhoneUpload.app`.
 3. Installs the `$phone-upload` Skill at `~/.codex/skills/phone-upload`.
-4. Opens the macOS app when installation finishes.
+4. Reuses `cloudflared` when present, or installs it through Homebrew when available, to enable optional public HTTPS mode.
+5. Opens the macOS app when installation finishes.
 
-No Homebrew package is required for same-Wi-Fi uploads. You can [review the installer](install.sh) before running it.
+No Homebrew package is required for same-Wi-Fi uploads. If Homebrew is unavailable, the installer skips `cloudflared` and keeps local mode working. You can [review the installer](install.sh) before running it.
 
 If Xcode Command Line Tools are missing, macOS will open its installer. Finish that installation, then run the same command again.
 
@@ -83,11 +85,12 @@ This is the simplest workflow.
 1. Open Codex and select the task that should receive the images.
 2. Keep that task and its composer visible.
 3. Open **CodexPhoneUpload** from Spotlight or Applications.
-4. Scan the QR code with WeChat.
-5. Select up to 12 images on the phone and upload them.
-6. Wait for the phone page to report success.
-7. Return to Codex. The images are attached to the composer but are **not sent**.
-8. Add your instructions and send the message manually when ready.
+4. Keep the default **Same Wi-Fi** mode, or explicitly choose **Public HTTPS** when the network isolates devices.
+5. Scan the QR code with WeChat.
+6. Select up to 12 images on the phone and upload them.
+7. Wait for the phone page to report success.
+8. Return to Codex. The images are attached to the composer but are **not sent**.
+9. Add your instructions and send the message manually when ready.
 
 The same QR-code page accepts multiple batches until its 10-minute link expires. After each successful batch, the phone queue clears so you can choose more images. The app does not stay in the menu bar or start at login; close it when you finish.
 
@@ -107,23 +110,23 @@ Codex displays a QR code and a fallback link. Scan the code, select the images, 
 
 ## Same-Wi-Fi and Remote Modes
 
-The macOS app and the Skill use direct same-Wi-Fi transfer by default. This is the fastest and most reliable option, and images do not pass through a third-party server.
+The macOS app and the Skill use direct same-Wi-Fi transfer by default. This is the fastest option, and images do not pass through a third-party network.
 
-Local mode uses unencrypted HTTP, so use it only on a trusted home or office Wi-Fi network. On hotel, cafe, guest, or other shared networks, use a personal hotspot or explicitly choose the Skill's remote mode, which uses an HTTPS Cloudflare tunnel.
+Local mode uses unencrypted HTTP, so use it only on a trusted home or office Wi-Fi network. On company, hotel, cafe, guest, or other networks that isolate devices, use a personal hotspot or explicitly choose **Public HTTPS** in the app. Switching modes stops the old session before creating a new QR code.
 
-Only the Skill supports optional remote mode. Install `cloudflared` first:
+Public mode needs Cloudflare's `cloudflared` connector. The installer adds it automatically through Homebrew when possible, or you can install it manually:
 
 ```bash
 brew install cloudflared
 ```
 
-Then enter:
+In the app, select **Public HTTPS**. For the Skill, enter:
 
 ```text
 $phone-upload Use remote mode. Generate a QR code and place images from my phone into the current composer. Do not send or analyze them.
 ```
 
-Remote mode creates a temporary Cloudflare tunnel and can be slower or less reliable than same-Wi-Fi mode.
+Public mode creates a random, temporary `trycloudflare.com` HTTPS address without requiring a Cloudflare account. Traffic passes through Cloudflare to the Mac's local upload service, so keep the QR code and link private. The tunnel stops when the session ends or the app switches modes, and it can be slower or blocked by company network policy.
 
 ## Update
 
@@ -144,6 +147,7 @@ The installer pulls the latest source, rebuilds the app, and refreshes the Skill
 - Avoid guest Wi-Fi networks that isolate connected devices.
 - Allow incoming connections in the macOS firewall prompt.
 - Reopen the app if the QR code is more than 10 minutes old.
+- If the Mac can open the link but the phone reports `ERR_ADDRESS_UNREACHABLE`, choose **Public HTTPS** or use a personal hotspot.
 
 ### The phone reports success, but Codex has no attachment
 
