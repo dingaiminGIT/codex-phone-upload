@@ -109,6 +109,8 @@ Codex displays a QR code and a fallback link. Scan the code, select the images, 
 
 The macOS app and the Skill use direct same-Wi-Fi transfer by default. This is the fastest and most reliable option, and images do not pass through a third-party server.
 
+Local mode uses unencrypted HTTP, so use it only on a trusted home or office Wi-Fi network. On hotel, cafe, guest, or other shared networks, use a personal hotspot or explicitly choose the Skill's remote mode, which uses an HTTPS Cloudflare tunnel.
+
 Only the Skill supports optional remote mode. Install `cloudflared` first:
 
 ```bash
@@ -200,6 +202,7 @@ rm -rf ~/.local/share/codex-phone-upload
 ## Privacy and Security
 
 - Upload URLs contain a random 64-character hexadecimal token and never use a fixed endpoint.
+- Same-Wi-Fi mode uses unencrypted HTTP and is intended only for trusted local networks; remote mode uses an HTTPS Cloudflare tunnel.
 - Local app sessions expire after 10 minutes and can accept multiple batches during that window. Skill sessions still stop after one successful batch.
 - The app locks the active Codex composer when it creates the QR code instead of silently choosing a different task later.
 - The Skill keeps temporary images only long enough to paste them; the app keeps uploads in memory.
@@ -209,9 +212,10 @@ rm -rf ~/.local/share/codex-phone-upload
 
 ## Development
 
-Run the parser self-tests and verify the app build:
+Run the Python lifecycle tests, parser self-tests, and verify the app build:
 
 ```bash
+python3 -m unittest discover -s skills/phone-upload/tests -v
 cd menubar
 swift run --jobs 1 CodexPhoneUploadSelfTests
 ./script/build_and_run.sh --verify

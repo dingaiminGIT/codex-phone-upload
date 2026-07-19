@@ -88,6 +88,30 @@ def stop_state_process(state_path):
     return True
 
 
+def terminate_process(process, timeout=5):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=timeout)
+    except OSError:
+        pass
+
+
+def cleanup_staging_dir(path):
+    try:
+        shutil.rmtree(Path(path))
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def clean_old_staging():
     if not STAGING_ROOT.is_dir():
         return
@@ -279,7 +303,7 @@ form.addEventListener('submit', async (event) => {{
 </body></html>"""
 
 
-def upload_page(action_path, project_name, expires_at):
+def upload_page(action_path, project_name, expires_at, mode="local"):
     template_path = Path(__file__).resolve().parent.parent / "assets" / "mobile-upload.html"
     template = template_path.read_text(encoding="utf-8")
     replacements = {
@@ -291,6 +315,7 @@ def upload_page(action_path, project_name, expires_at):
         "__MAX_FILE_MB__": str(MAX_FILE_BYTES // (1024 * 1024)),
         "__MAX_TOTAL_BYTES__": str(MAX_REQUEST_BYTES),
         "__MAX_TOTAL_MB__": str(MAX_REQUEST_BYTES // (1024 * 1024)),
+        "__LOCAL_MODE__": "true" if mode == "local" else "false",
     }
     for placeholder, value in replacements.items():
         template = template.replace(placeholder, value)
@@ -305,10 +330,11 @@ class UploadServer(ThreadingHTTPServer):
         super().__init__(address, handler)
         self.config = config
         self.completed = False
+        self.upload_lock = threading.Lock()
 
 
 class UploadHandler(BaseHTTPRequestHandler):
-    server_version = "CodexPhoneUpload/0.3"
+    server_version = "CodexPhoneUpload/0.3.2"
 
     def log_message(self, fmt, *args):
         message = "%s - %s\n" % (self.log_date_time_string(), fmt % args)
@@ -344,6 +370,7 @@ class UploadHandler(BaseHTTPRequestHandler):
             "/upload/" + self.server.config["token"],
             self.server.config["project_name"],
             self.server.config["expires_at"],
+            self.server.config.get("mode", "local"),
         ).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -359,6 +386,17 @@ class UploadHandler(BaseHTTPRequestHandler):
         if not self.valid_session() or self.server.completed:
             self.send_json(HTTPStatus.GONE, {"error": self.message("上传链接已失效", "The upload link has expired")})
             return
+        if not self.server.upload_lock.acquire(blocking=False):
+            self.send_json(HTTPStatus.CONFLICT, {
+                "error": self.message("正在处理上一批图片，请稍后重试", "Another batch is being attached. Try again shortly")
+            })
+            return
+        try:
+            self.handle_upload()
+        finally:
+            self.server.upload_lock.release()
+
+    def handle_upload(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -389,6 +427,14 @@ class UploadHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": self.message(f"请选择 1 到 {MAX_FILES} 张图片", f"Choose 1 to {MAX_FILES} images")})
             return
 
+        save_dir = Path(self.server.config["save_dir"])
+        try:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            os.chmod(str(save_dir), 0o700)
+        except OSError as error:
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(error)})
+            return
+
         saved = []
         try:
             for index, item in enumerate(items, 1):
@@ -408,7 +454,7 @@ class UploadHandler(BaseHTTPRequestHandler):
                         "Only PNG, JPEG, GIF, WebP, HEIC, and HEIF images are supported",
                     ))
                 filename = safe_name(original_name, index, extension)
-                target = Path(self.server.config["save_dir"]) / filename
+                target = save_dir / filename
                 counter = 1
                 while target.exists():
                     target = target.with_name(f"{target.stem}-{counter}{target.suffix}")
@@ -418,67 +464,56 @@ class UploadHandler(BaseHTTPRequestHandler):
                 os.chmod(str(target), 0o600)
                 saved.append(target)
         except (OSError, ValueError) as error:
-            for target in saved:
-                try:
-                    target.unlink()
-                except OSError:
-                    pass
+            cleanup_staging_dir(save_dir)
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
             return
 
         try:
-            paste_into_codex(saved)
-        except PartialPasteError as error:
-            for target in saved:
-                try:
-                    target.unlink()
-                except OSError:
-                    pass
-            state = dict(self.server.config["state"])
-            state.update({
-                "status": "partial_attach_failed",
-                "failed_at": iso_utc(time.time()),
-                "attached": error.attached,
-                "attachment_count": error.total,
-            })
-            atomic_json(Path(self.server.config["state_path"]), state)
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                "error": self.message("部分图片未能放入 Codex", "Some images could not be attached to Codex"),
-                "attached": error.attached,
-                "total": error.total,
-            })
-            return
-        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-            for target in saved:
-                try:
-                    target.unlink()
-                except OSError:
-                    pass
-            state = dict(self.server.config["state"])
-            state.update({
-                "status": "attach_failed",
-                "failed_at": iso_utc(time.time()),
-                "error": str(error),
-            })
-            atomic_json(Path(self.server.config["state_path"]), state)
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
-                "error": self.message(
-                    str(error),
-                    "Could not attach the images. Keep the target Codex task open and try again.",
-                )
-            })
-            return
+            try:
+                paste_into_codex(saved)
+            except PartialPasteError as error:
+                state = dict(self.server.config["state"])
+                state.update({
+                    "status": "partial_attach_failed",
+                    "failed_at": iso_utc(time.time()),
+                    "attached": error.attached,
+                    "attachment_count": error.total,
+                })
+                atomic_json(Path(self.server.config["state_path"]), state)
+                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "error": self.message("部分图片未能放入 Codex", "Some images could not be attached to Codex"),
+                    "attached": error.attached,
+                    "total": error.total,
+                })
+                return
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+                state = dict(self.server.config["state"])
+                state.update({
+                    "status": "attach_failed",
+                    "failed_at": iso_utc(time.time()),
+                    "error": str(error),
+                })
+                atomic_json(Path(self.server.config["state_path"]), state)
+                self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "error": self.message(
+                        str(error),
+                        "Could not attach the images. Keep the target Codex task open and try again.",
+                    )
+                })
+                return
 
-        self.server.completed = True
-        state = dict(self.server.config["state"])
-        state.update({
-            "status": "completed",
-            "completed_at": iso_utc(time.time()),
-            "attachment_count": len(saved),
-        })
-        atomic_json(Path(self.server.config["state_path"]), state)
-        self.send_json(HTTPStatus.OK, {"count": len(saved)})
-        threading.Timer(SHUTDOWN_DELAY_SECONDS, self.server.shutdown).start()
+            self.server.completed = True
+            state = dict(self.server.config["state"])
+            state.update({
+                "status": "completed",
+                "completed_at": iso_utc(time.time()),
+                "attachment_count": len(saved),
+            })
+            atomic_json(Path(self.server.config["state_path"]), state)
+            self.send_json(HTTPStatus.OK, {"count": len(saved)})
+            threading.Timer(SHUTDOWN_DELAY_SECONDS, self.server.shutdown).start()
+        finally:
+            cleanup_staging_dir(save_dir)
 
 
 def run_server(args):
@@ -505,83 +540,82 @@ def run_server(args):
     }
     atomic_json(state_path, initial_state)
 
-    bind_host = "0.0.0.0" if args.mode == "local" else "127.0.0.1"
-    server = UploadServer((bind_host, args.port), UploadHandler, {})
+    server = None
     tunnel = None
-    if args.mode == "local":
-        public_base = f"http://{args.local_ip}:{args.port}"
-    else:
-        cloudflared = shutil.which("cloudflared")
-        if not cloudflared:
-            raise RuntimeError("cloudflared 未安装")
-        with tunnel_log.open("w", encoding="utf-8") as log:
-            tunnel = subprocess.Popen(
-                [cloudflared, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{args.port}"],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-            )
-
-        public_base = None
-        deadline = time.time() + 12
-        while time.time() < deadline and tunnel.poll() is None:
-            try:
-                log_text = tunnel_log.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                log_text = ""
-            match = URL_PATTERN.search(log_text)
-            if match:
-                public_base = match.group(0)
-                break
-            time.sleep(0.2)
-        if not public_base:
-            if tunnel.poll() is None:
-                tunnel.terminate()
-            raise RuntimeError("无法创建 Cloudflare 临时公网地址；请改用同一 Wi-Fi 极速模式")
-
-    public_url = public_base + "/upload/" + args.token
-    qr_path = session_dir / "upload-qr.png"
-    generate_qr(public_url, qr_path)
-    os.chmod(str(qr_path), 0o600)
-    ready_state = dict(initial_state)
-    ready_state.update({
-        "status": "ready",
-        "mode": args.mode,
-        "public_url": public_url,
-        "qr_path": str(qr_path),
-    })
-    atomic_json(state_path, ready_state)
-
-    server.config = {
-        "token": args.token,
-        "project_name": project.name,
-        "save_dir": str(save_dir),
-        "expires_at": expires_at,
-        "state_path": str(state_path),
-        "request_log": str(request_log),
-        "state": ready_state,
-    }
-
-    def expire():
-        if not server.completed:
-            state = dict(ready_state)
-            state.update({"status": "expired", "expired_at": iso_utc(time.time())})
-            atomic_json(state_path, state)
-        server.shutdown()
-
-    timer = threading.Timer(max(0.1, expires_at - time.time()), expire)
-    timer.daemon = True
-    timer.start()
+    timer = None
     try:
+        bind_host = "0.0.0.0" if args.mode == "local" else "127.0.0.1"
+        server = UploadServer((bind_host, args.port), UploadHandler, {})
+        if args.mode == "local":
+            public_base = f"http://{args.local_ip}:{args.port}"
+        else:
+            cloudflared = shutil.which("cloudflared")
+            if not cloudflared:
+                raise RuntimeError("cloudflared 未安装")
+            with tunnel_log.open("w", encoding="utf-8") as log:
+                tunnel = subprocess.Popen(
+                    [cloudflared, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{args.port}"],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+
+            public_base = None
+            deadline = time.time() + 12
+            while time.time() < deadline and tunnel.poll() is None:
+                try:
+                    log_text = tunnel_log.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    log_text = ""
+                match = URL_PATTERN.search(log_text)
+                if match:
+                    public_base = match.group(0)
+                    break
+                time.sleep(0.2)
+            if not public_base:
+                raise RuntimeError("无法创建 Cloudflare 临时公网地址；请改用同一 Wi-Fi 极速模式")
+
+        public_url = public_base + "/upload/" + args.token
+        qr_path = session_dir / "upload-qr.png"
+        generate_qr(public_url, qr_path)
+        os.chmod(str(qr_path), 0o600)
+        ready_state = dict(initial_state)
+        ready_state.update({
+            "status": "ready",
+            "mode": args.mode,
+            "public_url": public_url,
+            "qr_path": str(qr_path),
+        })
+        atomic_json(state_path, ready_state)
+
+        server.config = {
+            "token": args.token,
+            "project_name": project.name,
+            "save_dir": str(save_dir),
+            "expires_at": expires_at,
+            "state_path": str(state_path),
+            "request_log": str(request_log),
+            "state": ready_state,
+            "mode": args.mode,
+        }
+
+        def expire():
+            if not server.completed:
+                state = dict(ready_state)
+                state.update({"status": "expired", "expired_at": iso_utc(time.time())})
+                atomic_json(state_path, state)
+            server.shutdown()
+
+        timer = threading.Timer(max(0.1, expires_at - time.time()), expire)
+        timer.daemon = True
+        timer.start()
         server.serve_forever(poll_interval=0.25)
     finally:
-        timer.cancel()
-        server.server_close()
-        if tunnel is not None and tunnel.poll() is None:
-            tunnel.terminate()
-            try:
-                tunnel.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                tunnel.kill()
+        if timer is not None:
+            timer.cancel()
+        if server is not None:
+            server.server_close()
+        terminate_process(tunnel)
+        cleanup_staging_dir(save_dir)
 
 
 def require_command(name, install_hint):
@@ -654,6 +688,8 @@ def start_session(args):
             detail = daemon_log.read_text(encoding="utf-8", errors="replace")[-2000:].strip()
         except OSError:
             pass
+        terminate_process(daemon)
+        cleanup_staging_dir(save_dir)
         raise RuntimeError("扫码上传服务启动失败" + (f"：{detail}" if detail else ""))
 
     print(f"QR_PATH={state['qr_path']}")
@@ -668,6 +704,8 @@ def stop_session(args):
     state_path = project / ".codex" / "phone-upload" / "session.json"
     stopped = stop_state_process(state_path)
     state = read_state(state_path)
+    if state.get("save_dir"):
+        cleanup_staging_dir(state["save_dir"])
     if state:
         state["status"] = "stopped"
         state["stopped_at"] = iso_utc(time.time())

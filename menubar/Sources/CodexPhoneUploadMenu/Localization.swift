@@ -37,7 +37,7 @@ struct AppText {
     let language: AppLanguage
 
     var appTitle: String { value("Codex 手机传图", "Codex Phone Upload") }
-    var subtitle: String { value("同一 Wi-Fi · 10 分钟内可连续上传", "Same Wi-Fi · upload for 10 minutes") }
+    var subtitle: String { value("可信 Wi-Fi · 10 分钟内可连续上传", "Trusted Wi-Fi · upload for 10 minutes") }
     var targetLabel: String { value("目标任务", "Target task") }
     var currentTask: String { value("当前 Codex 任务", "Current Codex task") }
     var idle: String { value("点击生成临时二维码", "Generate a temporary QR code") }

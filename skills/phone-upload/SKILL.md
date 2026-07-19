@@ -1,6 +1,6 @@
 ---
 name: phone-upload
-description: Start a temporary QR-code upload page that lets a phone or WeChat user select images and paste them into the current Codex desktop composer as unsent attachments. Use fast same-Wi-Fi local transfer by default and public remote transfer only when explicitly requested. Use when the user asks to scan a QR code, upload phone screenshots or photos, or put phone images into the active Codex input box. This skill only transfers files; it must not send a Codex turn, inspect, analyze, summarize, or modify uploaded images.
+description: Start a temporary QR-code upload page that lets a phone or WeChat user select images and paste them into the current Codex desktop composer as unsent attachments. Use fast same-Wi-Fi local transfer by default on trusted networks and public remote transfer only when explicitly requested. Use when the user asks to scan a QR code, upload phone screenshots or photos, or put phone images into the active Codex input box. This skill only transfers files; it must not send a Codex turn, inspect, analyze, summarize, or modify uploaded images.
 ---
 
 # Phone Upload
@@ -13,9 +13,9 @@ description: Start a temporary QR-code upload page that lets a phone or WeChat u
    ```
 
    Replace `<skill-directory>` with the absolute directory containing this `SKILL.md`.
-   Only when the user explicitly says the phone is not on the same Wi-Fi or asks for public/remote mode, append `--remote`.
+   Local mode uses unencrypted HTTP. Use it only when the phone and Mac are on the same trusted home or office Wi-Fi. Only when the user explicitly says the phone is not on the same Wi-Fi, the network is untrusted, or asks for public/remote mode, append `--remote`.
 3. Read `QR_PATH`, `UPLOAD_URL`, `MODE`, and `EXPIRES_AT` from the command output.
-4. Display the local image at `QR_PATH` in the response so the user can scan it with WeChat. Also provide `UPLOAD_URL` as a clickable fallback. If `MODE=local`, say the phone and Mac must be on the same Wi-Fi.
+4. Display the local image at `QR_PATH` in the response so the user can scan it with WeChat. Also provide `UPLOAD_URL` as a clickable fallback. If `MODE=local`, say the phone and Mac must be on the same trusted Wi-Fi and that the local transfer uses HTTP.
 5. State that a successful phone upload will place the images in the current Codex input box without sending them, and state when the link expires. Stop after that response.
 
 Do not wait for uploads, open uploaded files, analyze their contents, send the composer, or start another Codex task. The phone page uses a private temporary local staging file only long enough to paste the selected images into the current Codex composer, then closes the one-time session after a successful batch. It must not save uploaded images into the project.

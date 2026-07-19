@@ -1,0 +1,33 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check scripts
+        run: |
+          python3 -m py_compile skills/phone-upload/scripts/phone_upload.py
+          bash -n install.sh
+          bash -n menubar/script/build_and_run.sh
+          bash -n skills/phone-upload/scripts/build_helper.sh
+
+      - name: Test Python upload lifecycle
+        run: python3 -m unittest discover -s skills/phone-upload/tests -v
+
+      - name: Test Swift multipart validation
+        run: swift run --package-path menubar --jobs 1 CodexPhoneUploadSelfTests
+
+      - name: Build macOS app
+        env:
+          CODEX_PHONE_UPLOAD_SKIP_OPEN: "1"
+        run: menubar/script/build_and_run.sh --build
