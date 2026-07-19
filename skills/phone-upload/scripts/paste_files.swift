@@ -202,13 +202,20 @@ func composerAttachmentCount(in root: AXUIElement, composer: AXUIElement) -> Int
 }
 
 func resolveTarget(for app: NSRunningApplication) throws -> (root: AXUIElement, composer: AXUIElement) {
+    // Chromium may expose only a shallow accessibility tree while Codex is in
+    // the background. Activate it first and allow the full tree to hydrate.
+    app.activate(options: [])
     let root = AXUIElementCreateApplication(app.processIdentifier)
-    guard let windowValue = axAttribute(root, kAXFocusedWindowAttribute),
-          CFGetTypeID(windowValue) == AXUIElementGetTypeID(),
-          let composer = findComposer(in: windowValue as! AXUIElement) else {
-        throw PasteError.composerNotFound
-    }
-    return (root, composer)
+    let deadline = Date().addingTimeInterval(2)
+    repeat {
+        if let windowValue = axAttribute(root, kAXFocusedWindowAttribute),
+           CFGetTypeID(windowValue) == AXUIElementGetTypeID(),
+           let composer = findComposer(in: windowValue as! AXUIElement) {
+            return (root, composer)
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+    } while Date() < deadline
+    throw PasteError.composerNotFound
 }
 
 func focusComposer(in root: AXUIElement, composer: AXUIElement) throws -> AXUIElement {

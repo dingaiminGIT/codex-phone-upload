@@ -1,6 +1,6 @@
 {
   "name": "codex-phone-upload",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Generate a fast same-Wi-Fi QR code and paste phone images into the current Codex composer as unsent attachments, with optional remote mode.",
   "author": {
     "name": "dingaimin"

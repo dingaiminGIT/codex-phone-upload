@@ -24,18 +24,28 @@ final class CodexClipboardBridge {
             throw BridgeError.codexNotRunning
         }
 
+        // Recent Codex builds expose only a shallow Chromium accessibility tree
+        // while the app is in the background. Activate it before resolving the
+        // composer, then bring this QR window back once the target is locked.
+        codex.activate(options: [])
+        defer { NSApplication.shared.activate(ignoringOtherApps: true) }
+
         let root = AXUIElementCreateApplication(codex.processIdentifier)
-        guard let windowValue = attribute(root, kAXFocusedWindowAttribute),
-              CFGetTypeID(windowValue) == AXUIElementGetTypeID() else {
-            throw BridgeError.composerNotFound
-        }
-        let window = windowValue as! AXUIElement
-        guard let composer = findComposer(in: window) else {
-            throw BridgeError.composerNotFound
-        }
-        targetRoot = root
-        targetComposer = composer
-        return text(window, kAXTitleAttribute)
+        let deadline = Date().addingTimeInterval(2)
+        repeat {
+            if let windowValue = attribute(root, kAXFocusedWindowAttribute),
+               CFGetTypeID(windowValue) == AXUIElementGetTypeID() {
+                let window = windowValue as! AXUIElement
+                if let composer = findComposer(in: window) {
+                    targetRoot = root
+                    targetComposer = composer
+                    return text(window, kAXTitleAttribute)
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.15)
+        } while Date() < deadline
+
+        throw BridgeError.composerNotFound
     }
 
     func paste(_ images: [UploadedImage]) throws -> Int {

@@ -27,6 +27,9 @@ jobs:
       - name: Test Swift multipart validation
         run: swift run --package-path menubar --jobs 1 CodexPhoneUploadSelfTests
 
+      - name: Type-check Skill paste helper
+        run: xcrun swiftc -typecheck -framework AppKit -framework ApplicationServices -framework CoreImage skills/phone-upload/scripts/paste_files.swift
+
       - name: Build macOS app
         env:
           CODEX_PHONE_UPLOAD_SKIP_OPEN: "1"
