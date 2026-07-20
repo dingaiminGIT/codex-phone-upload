@@ -82,6 +82,11 @@ final class UploadCoordinator: ObservableObject {
         sessionGeneration = UUID()
         let generation = sessionGeneration
         stopSession()
+        phase = .starting
+        statusState = .starting
+        uploadURL = nil
+        qrImage = nil
+        expiresAt = nil
         guard CodexClipboardBridge.accessibilityGranted(prompt: true) else {
             phase = .failure
             statusState = .permissionRequired
@@ -98,12 +103,7 @@ final class UploadCoordinator: ObservableObject {
             statusState = .failure(error.localizedDescription)
             return
         }
-        phase = .starting
-        statusState = .starting
-        uploadURL = nil
-        qrImage = nil
-        expiresAt = nil
-
+        guard sessionGeneration == generation else { return }
         let server = LocalUploadServer(
             mode: mode,
             targetName: text.targetName(targetName),

@@ -421,7 +421,7 @@ class UploadServer(ThreadingHTTPServer):
 
 
 class UploadHandler(BaseHTTPRequestHandler):
-    server_version = "CodexPhoneUpload/0.4.0"
+    server_version = "CodexPhoneUpload/0.4.1"
 
     def log_message(self, fmt, *args):
         message = "%s - %s\n" % (self.log_date_time_string(), fmt % args)

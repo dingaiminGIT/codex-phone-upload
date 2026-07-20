@@ -31,18 +31,24 @@ final class CodexClipboardBridge {
         defer { NSApplication.shared.activate(ignoringOtherApps: true) }
 
         let root = AXUIElementCreateApplication(codex.processIdentifier)
-        let deadline = Date().addingTimeInterval(2)
+        let startedAt = Date()
+        let deadline = startedAt.addingTimeInterval(8)
+        var nudgedComposer = false
         repeat {
             if let windowValue = attribute(root, kAXFocusedWindowAttribute),
                CFGetTypeID(windowValue) == AXUIElementGetTypeID() {
                 let window = windowValue as! AXUIElement
-                if let composer = findComposer(in: window) {
+                if let composer = focusedComposer(in: root) ?? findComposer(in: window) {
                     targetRoot = root
                     targetComposer = composer
                     return text(window, kAXTitleAttribute)
                 }
+                if !nudgedComposer, Date().timeIntervalSince(startedAt) >= 1.5 {
+                    nudgeComposer(in: window)
+                    nudgedComposer = true
+                }
             }
-            Thread.sleep(forTimeInterval: 0.15)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
 
         throw BridgeError.composerNotFound
@@ -167,12 +173,9 @@ final class CodexClipboardBridge {
         while !queue.isEmpty && visited < 5000 {
             let element = queue.removeFirst()
             visited += 1
-            if text(element, kAXRoleAttribute) == "AXTextArea",
+            if isComposer(element),
                let position = point(element, kAXPositionAttribute),
-               let elementSize = size(element, kAXSizeAttribute),
-               elementSize.width >= 280,
-               elementSize.height >= 24,
-               elementSize.height <= 400 {
+               let elementSize = size(element, kAXSizeAttribute) {
                 candidates.append((element, position, elementSize))
             }
             queue.append(contentsOf: children(element))
@@ -180,6 +183,43 @@ final class CodexClipboardBridge {
         return candidates.max {
             ($0.1.y * 10 + $0.2.width) < ($1.1.y * 10 + $1.2.width)
         }?.0
+    }
+
+    private func focusedComposer(in root: AXUIElement) -> AXUIElement? {
+        guard let focused = attribute(root, kAXFocusedUIElementAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let element = focused as! AXUIElement
+        return isComposer(element) ? element : nil
+    }
+
+    private func isComposer(_ element: AXUIElement) -> Bool {
+        guard text(element, kAXRoleAttribute) == "AXTextArea",
+              let elementSize = size(element, kAXSizeAttribute) else { return false }
+        return elementSize.width >= 280 && elementSize.height >= 24 && elementSize.height <= 400
+    }
+
+    private func nudgeComposer(in window: AXUIElement) {
+        guard let windowPosition = point(window, kAXPositionAttribute),
+              let windowSize = size(window, kAXSizeAttribute),
+              let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        let clickPoint = CGPoint(
+            x: windowPosition.x + windowSize.width / 2,
+            y: windowPosition.y + max(24, windowSize.height - 78)
+        )
+        let down = CGEvent(
+            mouseEventSource: source,
+            mouseType: .leftMouseDown,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+        let up = CGEvent(
+            mouseEventSource: source,
+            mouseType: .leftMouseUp,
+            mouseCursorPosition: clickPoint,
+            mouseButton: .left
+        )
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 
     private func attachmentCount(in root: AXUIElement, composer: AXUIElement) -> Int {

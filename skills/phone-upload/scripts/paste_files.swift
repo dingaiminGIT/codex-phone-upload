@@ -170,6 +170,43 @@ func findComposer(in root: AXUIElement) -> AXUIElement? {
     }?.element
 }
 
+func isComposer(_ element: AXUIElement) -> Bool {
+    guard axText(element, kAXRoleAttribute) == "AXTextArea",
+          let size = axSize(element, kAXSizeAttribute) else { return false }
+    return size.width >= 280 && size.height >= 24 && size.height <= 400
+}
+
+func focusedComposer(in root: AXUIElement) -> AXUIElement? {
+    guard let focused = axAttribute(root, kAXFocusedUIElementAttribute),
+          CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+    let element = focused as! AXUIElement
+    return isComposer(element) ? element : nil
+}
+
+func nudgeComposer(in window: AXUIElement) {
+    guard let windowPosition = axPoint(window, kAXPositionAttribute),
+          let windowSize = axSize(window, kAXSizeAttribute),
+          let source = CGEventSource(stateID: .combinedSessionState) else { return }
+    let clickPoint = CGPoint(
+        x: windowPosition.x + windowSize.width / 2,
+        y: windowPosition.y + max(24, windowSize.height - 78)
+    )
+    let down = CGEvent(
+        mouseEventSource: source,
+        mouseType: .leftMouseDown,
+        mouseCursorPosition: clickPoint,
+        mouseButton: .left
+    )
+    let up = CGEvent(
+        mouseEventSource: source,
+        mouseType: .leftMouseUp,
+        mouseCursorPosition: clickPoint,
+        mouseButton: .left
+    )
+    down?.post(tap: .cghidEventTap)
+    up?.post(tap: .cghidEventTap)
+}
+
 func composerAttachmentCount(in root: AXUIElement, composer: AXUIElement) -> Int {
     guard let composerPosition = axPoint(composer, kAXPositionAttribute),
           let composerSize = axSize(composer, kAXSizeAttribute) else {
@@ -206,12 +243,20 @@ func resolveTarget(for app: NSRunningApplication) throws -> (root: AXUIElement, 
     // the background. Activate it first and allow the full tree to hydrate.
     app.activate(options: [])
     let root = AXUIElementCreateApplication(app.processIdentifier)
-    let deadline = Date().addingTimeInterval(2)
+    let startedAt = Date()
+    let deadline = startedAt.addingTimeInterval(8)
+    var nudgedComposer = false
     repeat {
         if let windowValue = axAttribute(root, kAXFocusedWindowAttribute),
-           CFGetTypeID(windowValue) == AXUIElementGetTypeID(),
-           let composer = findComposer(in: windowValue as! AXUIElement) {
-            return (root, composer)
+           CFGetTypeID(windowValue) == AXUIElementGetTypeID() {
+            let window = windowValue as! AXUIElement
+            if let composer = focusedComposer(in: root) ?? findComposer(in: window) {
+                return (root, composer)
+            }
+            if !nudgedComposer, Date().timeIntervalSince(startedAt) >= 1.5 {
+                nudgeComposer(in: window)
+                nudgedComposer = true
+            }
         }
         Thread.sleep(forTimeInterval: 0.15)
     } while Date() < deadline

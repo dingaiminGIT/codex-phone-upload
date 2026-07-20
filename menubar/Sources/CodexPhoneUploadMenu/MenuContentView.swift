@@ -55,7 +55,7 @@ struct MenuContentView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .disabled(coordinator.phase == .uploading)
+            .disabled(coordinator.phase == .starting || coordinator.phase == .uploading)
             .accessibilityLabel(coordinator.text.modeLabel)
 
             if let targetName = coordinator.targetName {
@@ -113,6 +113,7 @@ struct MenuContentView: View {
                     coordinator.newSession()
                 }
                 .buttonStyle(.bordered)
+                .disabled(coordinator.phase == .starting || coordinator.phase == .uploading)
 
                 Button(coordinator.text.copyLink) {
                     coordinator.copyUploadURL()
