@@ -122,6 +122,22 @@ struct MenuContentView: View {
             }
             .controlSize(.small)
 
+            if coordinator.phase == .failure, coordinator.diagnosticReport != nil {
+                Button {
+                    coordinator.copyDiagnostics()
+                } label: {
+                    Label(
+                        coordinator.diagnosticCopied
+                            ? coordinator.text.diagnosticsCopied
+                            : coordinator.text.copyDiagnostics,
+                        systemImage: coordinator.diagnosticCopied ? "checkmark" : "doc.on.doc"
+                    )
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(coordinator.diagnosticCopied ? .green : .blue)
+            }
+
             Divider()
 
             HStack {

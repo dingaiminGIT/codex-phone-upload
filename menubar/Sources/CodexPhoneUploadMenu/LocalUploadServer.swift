@@ -14,7 +14,7 @@ final class LocalUploadServer: @unchecked Sendable {
         case startupFailed(String)
         case uploading(Int)
         case success(Int)
-        case partialFailure(attached: Int, total: Int, reason: String)
+        case partialFailure(attached: Int, total: Int, error: Error)
         case failure(Error)
     }
 
@@ -281,7 +281,7 @@ final class LocalUploadServer: @unchecked Sendable {
                                 .partialFailure(
                                     attached: partial.attached,
                                     total: partial.total,
-                                    reason: partial.underlying.localizedDescription
+                                    error: partial.underlying
                                 )
                             )
                         } else if let partial = error as? CodexClipboardBridge.PartialPasteError {

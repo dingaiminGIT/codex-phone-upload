@@ -12,6 +12,7 @@ struct MultipartParserSelfTests {
         try rejectsMissingImages()
         try rejectsTooManyImages()
         try rejectsOversizedImage()
+        try rendersPrivacySafeCompatibilityDiagnostics()
         print("MultipartParser self-tests passed")
     }
 
@@ -112,6 +113,44 @@ struct MultipartParserSelfTests {
                 body: multipartBody(boundary: boundary, files: [("large.png", oversized)]),
                 boundary: boundary
             )
+        }
+    }
+
+    private static func rendersPrivacySafeCompatibilityDiagnostics() throws {
+        let snapshot = AccessibilityDiagnosticSnapshot(
+            elapsedMilliseconds: 8_012,
+            focusedWindowObserved: true,
+            nudgeAttempted: true,
+            samples: [
+                AccessibilityDiagnosticSample(
+                    elapsedMilliseconds: 150,
+                    nodeCount: 7,
+                    composerCandidateCount: 0,
+                    focusedRole: "AXGroup",
+                    roleCounts: ["AXGroup": 7, "AXTextArea\nprivate conversation": 1]
+                ),
+            ]
+        )
+        let output = CompatibilityDiagnostic(
+            toolVersion: "0.4.2",
+            toolBuild: "10",
+            macOSVersion: "Version 15.5 (Build 24F74)",
+            codexVersion: "1.0",
+            codexBuild: "100",
+            mode: "same_wifi",
+            accessibilityGranted: true,
+            stage: "prepare_target",
+            errorCode: "composer_not_found",
+            accessibility: snapshot
+        ).rendered()
+
+        guard output.contains("Error code: composer_not_found"),
+              output.contains("nodes=7"),
+              output.contains("AXGroup:7"),
+              output.contains("unknown:1"),
+              !output.contains("private conversation"),
+              output.contains("no conversation text, images, filenames, upload URLs, or tokens") else {
+            throw SelfTestFailure("compatibility diagnostics were incomplete or exposed unsafe role content")
         }
     }
 

@@ -12,6 +12,7 @@ It removes the usual detour through WeChat File Transfer, AirDrop, or saving ima
 - Same-Wi-Fi mode by default, with an explicit public HTTPS fallback for isolated company or guest networks
 - Up to 12 images per batch, 25 MB per image, and 100 MB total
 - Locks the active Codex composer when the QR code is created
+- Offers a local, privacy-safe compatibility report when setup or attachment fails
 - If a batch stops partway through, retry only the remaining images
 - Does not send the Codex message
 - Does not inspect or analyze images
@@ -155,6 +156,8 @@ The installer pulls the latest source, rebuilds the app, and refreshes the Skill
 - Confirm that **CodexPhoneUpload** is enabled under **System Settings → Privacy & Security → Accessibility**.
 - Run the one-command installer again to update the app.
 - Reopen the app and retry with a new QR code.
+
+If the app reports a failure, choose **Copy diagnostics** and include the report in a GitHub issue. The report is created locally and never uploaded automatically. It contains app, macOS, and Codex versions plus Accessibility node counts and failure stages. It does not include conversation text, images, filenames, upload URLs, or session tokens.
 
 ### Codex does not recognize `$phone-upload`
 

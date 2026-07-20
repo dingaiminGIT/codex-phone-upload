@@ -7,6 +7,7 @@ import CodexPhoneUploadCore
 final class CodexClipboardBridge {
     private var targetRoot: AXUIElement?
     private var targetComposer: AXUIElement?
+    private(set) var diagnosticSnapshot: AccessibilityDiagnosticSnapshot?
 
     static func accessibilityGranted(prompt: Bool) -> Bool {
         guard prompt else { return AXIsProcessTrusted() }
@@ -15,6 +16,7 @@ final class CodexClipboardBridge {
     }
 
     func prepareTarget() throws -> String? {
+        diagnosticSnapshot = nil
         guard Self.accessibilityGranted(prompt: true) else {
             throw BridgeError.accessibilityNotGranted
         }
@@ -34,16 +36,50 @@ final class CodexClipboardBridge {
         let startedAt = Date()
         let deadline = startedAt.addingTimeInterval(8)
         var nudgedComposer = false
+        var focusedWindowObserved = false
+        var samples: [AccessibilityDiagnosticSample] = []
+        var lastSampleMilliseconds = -1_000
         repeat {
             if let windowValue = attribute(root, kAXFocusedWindowAttribute),
                CFGetTypeID(windowValue) == AXUIElementGetTypeID() {
+                focusedWindowObserved = true
                 let window = windowValue as! AXUIElement
-                if let composer = focusedComposer(in: root) ?? findComposer(in: window) {
+                let scan = scanComposer(in: window)
+                if let composer = focusedComposer(in: root) ?? scan.composer {
+                    let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                    samples.append(
+                        AccessibilityDiagnosticSample(
+                            elapsedMilliseconds: elapsedMilliseconds,
+                            nodeCount: scan.visited,
+                            composerCandidateCount: scan.composerCandidateCount,
+                            focusedRole: focusedRole(in: root),
+                            roleCounts: scan.roleCounts
+                        )
+                    )
+                    diagnosticSnapshot = AccessibilityDiagnosticSnapshot(
+                        elapsedMilliseconds: elapsedMilliseconds,
+                        focusedWindowObserved: focusedWindowObserved,
+                        nudgeAttempted: nudgedComposer,
+                        samples: samples
+                    )
                     targetRoot = root
                     targetComposer = composer
                     return text(window, kAXTitleAttribute)
                 }
-                if !nudgedComposer, Date().timeIntervalSince(startedAt) >= 1.5 {
+                let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                if samples.isEmpty || elapsedMilliseconds - lastSampleMilliseconds >= 1_000 {
+                    samples.append(
+                        AccessibilityDiagnosticSample(
+                            elapsedMilliseconds: elapsedMilliseconds,
+                            nodeCount: scan.visited,
+                            composerCandidateCount: scan.composerCandidateCount,
+                            focusedRole: focusedRole(in: root),
+                            roleCounts: scan.roleCounts
+                        )
+                    )
+                    lastSampleMilliseconds = elapsedMilliseconds
+                }
+                if !nudgedComposer, elapsedMilliseconds >= 1_500 {
                     nudgeComposer(in: window)
                     nudgedComposer = true
                 }
@@ -51,6 +87,12 @@ final class CodexClipboardBridge {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
 
+        diagnosticSnapshot = AccessibilityDiagnosticSnapshot(
+            elapsedMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000),
+            focusedWindowObserved: focusedWindowObserved,
+            nudgeAttempted: nudgedComposer,
+            samples: samples
+        )
         throw BridgeError.composerNotFound
     }
 
@@ -166,23 +208,41 @@ final class CodexClipboardBridge {
         }
     }
 
-    private func findComposer(in root: AXUIElement) -> AXUIElement? {
+    private struct ComposerScan {
+        let composer: AXUIElement?
+        let visited: Int
+        let composerCandidateCount: Int
+        let roleCounts: [String: Int]
+    }
+
+    private func scanComposer(in root: AXUIElement) -> ComposerScan {
         var queue = [root]
         var candidates: [(AXUIElement, CGPoint, CGSize)] = []
+        var roleCounts: [String: Int] = [:]
         var visited = 0
         while !queue.isEmpty && visited < 5000 {
             let element = queue.removeFirst()
             visited += 1
-            if isComposer(element),
+            let role = text(element, kAXRoleAttribute)
+            if !role.isEmpty {
+                roleCounts[role, default: 0] += 1
+            }
+            if isComposer(element, role: role),
                let position = point(element, kAXPositionAttribute),
                let elementSize = size(element, kAXSizeAttribute) {
                 candidates.append((element, position, elementSize))
             }
             queue.append(contentsOf: children(element))
         }
-        return candidates.max {
+        let composer = candidates.max {
             ($0.1.y * 10 + $0.2.width) < ($1.1.y * 10 + $1.2.width)
         }?.0
+        return ComposerScan(
+            composer: composer,
+            visited: visited,
+            composerCandidateCount: candidates.count,
+            roleCounts: roleCounts
+        )
     }
 
     private func focusedComposer(in root: AXUIElement) -> AXUIElement? {
@@ -193,7 +253,11 @@ final class CodexClipboardBridge {
     }
 
     private func isComposer(_ element: AXUIElement) -> Bool {
-        guard text(element, kAXRoleAttribute) == "AXTextArea",
+        isComposer(element, role: text(element, kAXRoleAttribute))
+    }
+
+    private func isComposer(_ element: AXUIElement, role: String) -> Bool {
+        guard role == "AXTextArea",
               let elementSize = size(element, kAXSizeAttribute) else { return false }
         return elementSize.width >= 280 && elementSize.height >= 24 && elementSize.height <= 400
     }
@@ -309,6 +373,20 @@ final class CodexClipboardBridge {
         case clipboardWriteFailed
         case eventCreationFailed
         case attachmentNotConfirmed
+
+        var diagnosticCode: String {
+            switch self {
+            case .accessibilityNotGranted: return "accessibility_not_granted"
+            case .codexNotRunning: return "codex_not_running"
+            case .composerNotFound: return "composer_not_found"
+            case .composerFocusFailed: return "composer_focus_failed"
+            case .targetUnavailable: return "target_unavailable"
+            case .imageDecodeFailed: return "image_decode_failed"
+            case .clipboardWriteFailed: return "clipboard_write_failed"
+            case .eventCreationFailed: return "event_creation_failed"
+            case .attachmentNotConfirmed: return "attachment_not_confirmed"
+            }
+        }
 
         var errorDescription: String? {
             switch self {

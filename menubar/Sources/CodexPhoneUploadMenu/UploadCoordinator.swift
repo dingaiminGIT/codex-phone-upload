@@ -35,6 +35,8 @@ final class UploadCoordinator: ObservableObject {
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var expiresAt: Date?
     @Published private(set) var targetName: String?
+    @Published private(set) var diagnosticReport: String?
+    @Published private(set) var diagnosticCopied = false
 
     private var server: LocalUploadServer?
     private let bridge = CodexClipboardBridge()
@@ -87,9 +89,12 @@ final class UploadCoordinator: ObservableObject {
         uploadURL = nil
         qrImage = nil
         expiresAt = nil
+        diagnosticReport = nil
+        diagnosticCopied = false
         guard CodexClipboardBridge.accessibilityGranted(prompt: true) else {
             phase = .failure
             statusState = .permissionRequired
+            captureDiagnostic(stage: "permissions", errorCode: "accessibility_not_granted")
             return
         }
         do {
@@ -97,10 +102,12 @@ final class UploadCoordinator: ObservableObject {
         } catch let error as CodexClipboardBridge.BridgeError {
             phase = .failure
             statusState = .failure(text.bridgeError(error))
+            captureDiagnostic(stage: "prepare_target", errorCode: error.diagnosticCode)
             return
         } catch {
             phase = .failure
             statusState = .failure(error.localizedDescription)
+            captureDiagnostic(stage: "prepare_target", errorCode: "unexpected_error")
             return
         }
         guard sessionGeneration == generation else { return }
@@ -130,15 +137,18 @@ final class UploadCoordinator: ObservableObject {
                     case .success(let count):
                         self.phase = .ready
                         self.statusState = .success(count)
-                    case .partialFailure(let attached, let total, _):
+                    case .partialFailure(let attached, let total, let error):
                         self.phase = .failure
                         self.statusState = .partial(attached, total)
+                        self.captureDiagnostic(stage: "attach_images", errorCode: self.diagnosticCode(for: error))
                     case .startupFailed(let reason):
                         self.phase = .failure
                         self.statusState = .failure(self.text.serverStartFailed(reason))
+                        self.captureDiagnostic(stage: "start_server", errorCode: "server_startup_failed")
                     case .failure(let error):
                         self.phase = .failure
                         self.statusState = .failure(self.localized(error))
+                        self.captureDiagnostic(stage: "attach_images", errorCode: self.diagnosticCode(for: error))
                     }
                 }
             },
@@ -164,6 +174,7 @@ final class UploadCoordinator: ObservableObject {
             try server.start()
         } catch {
             phase = .failure
+            captureDiagnostic(stage: "start_server", errorCode: diagnosticCode(for: error))
             if let serverError = error as? LocalUploadServer.ServerError {
                 switch serverError {
                 case .noLocalAddress:
@@ -185,6 +196,13 @@ final class UploadCoordinator: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(uploadURL.absoluteString, forType: .string)
         statusState = .copied
+    }
+
+    func copyDiagnostics() {
+        guard let diagnosticReport else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnosticReport, forType: .string)
+        diagnosticCopied = true
     }
 
     func stopSession() {
@@ -219,5 +237,60 @@ final class UploadCoordinator: ObservableObject {
             return text.tunnelError(tunnel)
         }
         return error.localizedDescription
+    }
+
+    private func captureDiagnostic(stage: String, errorCode: String) {
+        let toolVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let toolBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let codex = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
+        let codexBundle = codex?.bundleURL.flatMap(Bundle.init(url:))
+        let codexVersion = codexBundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let codexBuild = codexBundle?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let report = CompatibilityDiagnostic(
+            toolVersion: toolVersion,
+            toolBuild: toolBuild,
+            macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            codexVersion: codexVersion,
+            codexBuild: codexBuild,
+            mode: mode == .local ? "same_wifi" : "public_https",
+            accessibilityGranted: CodexClipboardBridge.accessibilityGranted(prompt: false),
+            stage: stage,
+            errorCode: errorCode,
+            accessibility: bridge.diagnosticSnapshot
+        )
+        diagnosticReport = report.rendered()
+        diagnosticCopied = false
+    }
+
+    private func diagnosticCode(for error: Error) -> String {
+        if let partial = error as? CodexClipboardBridge.PartialPasteError {
+            return diagnosticCode(for: partial.underlying)
+        }
+        if let bridge = error as? CodexClipboardBridge.BridgeError {
+            return bridge.diagnosticCode
+        }
+        if let validation = error as? UploadValidationError {
+            switch validation {
+            case .malformedRequest: return "malformed_request"
+            case .noImages: return "no_images"
+            case .tooManyImages: return "too_many_images"
+            case .imageTooLarge: return "image_too_large"
+            case .unsupportedImage: return "unsupported_image"
+            }
+        }
+        if let server = error as? LocalUploadServer.ServerError {
+            switch server {
+            case .noLocalAddress: return "no_local_address"
+            case .listenerFailed: return "listener_failed"
+            }
+        }
+        if let tunnel = error as? CloudflareTunnel.TunnelError {
+            switch tunnel {
+            case .notInstalled: return "cloudflared_not_installed"
+            case .timedOut: return "cloudflare_tunnel_timed_out"
+            case .exited: return "cloudflare_tunnel_exited"
+            }
+        }
+        return "unexpected_error"
     }
 }

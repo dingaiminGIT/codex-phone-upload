@@ -71,6 +71,8 @@ struct AppText {
     var expired: String { value("二维码已过期，请重新生成", "QR code expired. Generate a new one") }
     var newCode: String { value("重新生成", "New code") }
     var copyLink: String { value("复制链接", "Copy link") }
+    var copyDiagnostics: String { value("复制诊断信息", "Copy diagnostics") }
+    var diagnosticsCopied: String { value("诊断信息已复制", "Diagnostics copied") }
     var close: String { value("关闭", "Close") }
     var privacySummary: String { value("最多 12 张 · 不发送 · 不分析", "Up to 12 · not sent · not analyzed") }
     var unavailable: String { value("手机传图工具暂时不可用", "Phone Upload is temporarily unavailable") }
