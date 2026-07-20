@@ -31,16 +31,16 @@ It removes the usual detour through WeChat File Transfer, AirDrop, or saving ima
 
 ### Mac app
 
-The app stays compact and shows compatibility diagnostics only when something fails. Real QR codes are intentionally omitted from the repository because each one contains a private temporary upload link.
+The app stays compact and supports both Chinese and English. These previews use a nonfunctional `example.com` demo QR code; no real upload address, local IP, session token, task name, or computer information is included.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/mac-diagnostics-zh.jpg" alt="Chinese macOS app showing first-time Accessibility guidance and Copy diagnostics" width="280"></td>
-    <td align="center"><img src="docs/images/mac-diagnostics-en.jpg" alt="English macOS app showing first-time Accessibility guidance and Copy diagnostics" width="280"></td>
+    <td align="center"><img src="docs/images/mac-ready-demo-zh.jpg" alt="Chinese macOS app showing a privacy-safe demo QR code" width="280"></td>
+    <td align="center"><img src="docs/images/mac-ready-demo-en.jpg" alt="English macOS app showing a privacy-safe demo QR code" width="280"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Chinese macOS interface</strong><br>Local and public modes with failure diagnostics</td>
-    <td align="center"><strong>English macOS interface</strong><br>The same privacy-safe troubleshooting flow</td>
+    <td align="center"><strong>Chinese macOS interface</strong><br>Compact QR window with local and public modes</td>
+    <td align="center"><strong>English macOS interface</strong><br>The same workflow with English localization</td>
   </tr>
 </table>
 
