@@ -19,6 +19,7 @@ jobs:
           python3 -m py_compile skills/phone-upload/scripts/phone_upload.py
           bash -n install.sh
           bash -n menubar/script/build_and_run.sh
+          bash -n menubar/script/local_signing.sh
           bash -n skills/phone-upload/scripts/build_helper.sh
 
       - name: Test Python upload lifecycle

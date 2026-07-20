@@ -1,5 +1,7 @@
 # Codex Phone Upload
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Scan a QR code with WeChat and place phone screenshots or photos directly into the current Codex desktop composer.
 
 It removes the usual detour through WeChat File Transfer, AirDrop, or saving images to the Mac desktop first. Open the app only when you need it, scan once, and keep sending image batches to the same Codex task for 10 minutes.
@@ -13,6 +15,7 @@ It removes the usual detour through WeChat File Transfer, AirDrop, or saving ima
 - Up to 12 images per batch, 25 MB per image, and 100 MB total
 - Locks the active Codex composer when the QR code is created
 - Offers a local, privacy-safe compatibility report when setup or attachment fails
+- Uses a free, per-Mac signing identity so Accessibility permission can survive local rebuilds and updates
 - If a batch stops partway through, retry only the remaining images
 - Does not send the Codex message
 - Does not inspect or analyze images
@@ -77,7 +80,8 @@ The installer automatically:
 2. Builds and installs `~/Applications/CodexPhoneUpload.app`.
 3. Installs the `$phone-upload` Skill at `~/.codex/skills/phone-upload`.
 4. Reuses `cloudflared` when present, or installs it through Homebrew when available, to enable optional public HTTPS mode.
-5. Opens the macOS app when installation finishes.
+5. Offers to create or reuse a free local signing identity in the login keychain.
+6. Opens the macOS app when installation finishes.
 
 No Homebrew package is required for same-Wi-Fi uploads. If Homebrew is unavailable, the installer skips `cloudflared` and keeps local mode working. You can [review the installer](install.sh) before running it.
 
@@ -85,14 +89,16 @@ If Xcode Command Line Tools are missing, macOS will open its installer. Finish t
 
 ## First-Time Setup
 
-The app needs Accessibility permission to focus the Codex composer and paste attachments.
+The app needs Accessibility permission to focus the Codex composer and paste attachments. During the first installation, accept the local signing option. When macOS says that **codesign** wants to access the `signing-identity` key, enter your Mac login password and choose **Always Allow**. Do not approve a prompt for an unrelated app or key.
 
 1. Open **System Settings → Privacy & Security → Accessibility**.
 2. Enable **CodexPhoneUpload**.
 3. Close and reopen the app.
 4. Restart Codex once so it discovers the installed Skill.
 
-This permission is normally required only once. macOS may request it again after the app is rebuilt or upgraded.
+This permission is normally required only once. Version 0.4.3 introduces the stable local identity, so an existing user upgrading from an older ad-hoc-signed build must remove the old Accessibility entry, add the newly signed app, and enable it one final time. Later updates reuse the same identity as long as the certificate remains in the login keychain and the app stays at the same path.
+
+The certificate is self-signed, local to this Mac, marked for code signing, and its private key is non-exportable. It is not added to system trust, does not bypass Gatekeeper, and does not make GitHub downloads trusted on another Mac.
 
 If macOS asks whether the app may accept incoming network connections, click **Allow**. This lets the phone reach the temporary upload page over Wi-Fi.
 
@@ -154,7 +160,7 @@ Run the same installation command again:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/dingaiminGIT/codex-phone-upload/main/install.sh)"
 ```
 
-The installer pulls the latest source, rebuilds the app, and refreshes the Skill link. Restart Codex if the Skill changed. A rebuilt app may need Accessibility permission again.
+The installer pulls the latest source, rebuilds the app, reuses the same local signing identity, and refreshes the Skill link. Restart Codex if the Skill changed. Once version 0.4.3 or later has been granted Accessibility permission, ordinary updates should no longer require removing and re-adding the app.
 
 ## Troubleshooting
 
@@ -188,7 +194,13 @@ Then restart Codex. The macOS app can still be used independently of the Skill.
 
 ### The Accessibility prompt appears again
 
-This can happen after rebuilding, replacing, moving, or upgrading the app. Enable the current app again in **System Settings → Privacy & Security → Accessibility**.
+Check that the stable local signing identity is present:
+
+```bash
+~/.local/share/codex-phone-upload/menubar/script/local_signing.sh status
+```
+
+If this is the first upgrade from a version before 0.4.3, remove the old **CodexPhoneUpload** row from **System Settings → Privacy & Security → Accessibility**, add `~/Applications/CodexPhoneUpload.app`, and enable it once. If the status command reports `missing`, run the one-command installer again and accept local signing. Moving the app, deleting the identity, or installing a build signed by a different Mac will create a new identity and require permission again.
 
 ## Manual Installation
 
@@ -200,6 +212,7 @@ cd codex-phone-upload
 
 # Build and install the app
 cd menubar
+./script/local_signing.sh ensure
 ./script/build_and_run.sh --install
 cd ..
 
@@ -219,6 +232,12 @@ rm -rf ~/.local/share/codex-phone-upload
 rm -rf ~/Library/Application\ Support/CodexPhoneUpload
 ```
 
+The local signing identity is intentionally kept so a later reinstall can reuse the same Accessibility identity. To remove it too, run:
+
+```bash
+security delete-identity -c "Codex Phone Upload Local Signing" "$HOME/Library/Keychains/login.keychain-db"
+```
+
 ## Contributors
 
 - [@dingaiminGIT](https://github.com/dingaiminGIT) — creator and maintainer
@@ -235,6 +254,7 @@ rm -rf ~/Library/Application\ Support/CodexPhoneUpload
 - Before stopping a Skill server, the tool verifies the process command, state-file path, and per-session random identifier instead of trusting a saved PID alone.
 - Uploaded images are never written to the current project.
 - The tool uses the macOS Accessibility API only to focus the Codex composer and paste attachments.
+- The optional local signing certificate is self-signed and untrusted, stays in the login keychain, has a non-exportable private key, and is used only to keep this Mac's app identity stable across rebuilds.
 - The tool does not send the Codex message and does not analyze uploaded images.
 
 ## Development

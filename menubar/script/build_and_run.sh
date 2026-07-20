@@ -13,6 +13,22 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
+LOCAL_SIGNING_SCRIPT="$ROOT_DIR/script/local_signing.sh"
+
+resolve_signing_identity() {
+  if [[ -n "${CODEX_PHONE_UPLOAD_SIGNING_IDENTITY:-}" ]]; then
+    printf '%s\n' "$CODEX_PHONE_UPLOAD_SIGNING_IDENTITY"
+    return
+  fi
+
+  local local_identity
+  local_identity="$($LOCAL_SIGNING_SCRIPT identity 2>/dev/null || true)"
+  if [[ -n "$local_identity" ]]; then
+    printf '%s\n' "$local_identity"
+  else
+    printf '%s\n' '-'
+  fi
+}
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -28,7 +44,13 @@ cp "$ROOT_DIR/Resources/Info.plist" "$APP_CONTENTS/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
 find "$ROOT_DIR/Resources" -mindepth 1 -maxdepth 1 -type d -name '*.lproj' -exec cp -R {} "$APP_RESOURCES/" \;
 chmod +x "$APP_BINARY"
-/usr/bin/codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
+SIGNING_IDENTITY="$(resolve_signing_identity)"
+/usr/bin/codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_BUNDLE" >/dev/null
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  echo "Signed with an ad-hoc identity (local stable signing is not configured)." >&2
+else
+  echo "Signed with the stable local identity: $SIGNING_IDENTITY" >&2
+fi
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"

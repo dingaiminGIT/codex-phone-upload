@@ -6,6 +6,7 @@ SOURCE_DIR="${CODEX_PHONE_UPLOAD_SOURCE:-$HOME/.local/share/codex-phone-upload}"
 APP_DIR="${CODEX_PHONE_UPLOAD_APP_DIR:-$HOME/Applications}"
 SKILLS_DIR="${CODEX_PHONE_UPLOAD_SKILLS_DIR:-$HOME/.codex/skills}"
 SKILL_LINK="$SKILLS_DIR/phone-upload"
+LOCAL_SIGNING_NAME="Codex Phone Upload Local Signing"
 
 info() {
   printf '\n==> %s\n' "$1"
@@ -41,6 +42,59 @@ install_cloudflared_if_possible() {
   fi
 }
 
+configure_local_signing() {
+  local setting answer identity
+  setting="${CODEX_PHONE_UPLOAD_LOCAL_SIGNING:-ask}"
+
+  case "$setting" in
+    0|no|false)
+      warn "Stable local signing was skipped. A future rebuild may require Accessibility permission again."
+      export CODEX_PHONE_UPLOAD_SIGNING_IDENTITY="-"
+      return
+      ;;
+    1|yes|true|ask)
+      ;;
+    *)
+      fail "CODEX_PHONE_UPLOAD_LOCAL_SIGNING must be 1, 0, or ask."
+      ;;
+  esac
+
+  if identity="$($SOURCE_DIR/menubar/script/local_signing.sh identity 2>/dev/null)" && [[ -n "$identity" ]]; then
+    info "Reusing the stable local signing identity"
+    export CODEX_PHONE_UPLOAD_SIGNING_IDENTITY="$identity"
+    return
+  fi
+
+  case "$setting" in
+    1|yes|true)
+      ;;
+    ask)
+      if [[ ! -t 0 ]]; then
+        warn "Stable local signing was skipped in a non-interactive install. Set CODEX_PHONE_UPLOAD_LOCAL_SIGNING=1 to enable it."
+        return
+      fi
+      printf '\nCodex Phone Upload can create a free signing identity named:\n  %s\n\n' "$LOCAL_SIGNING_NAME"
+      printf 'It stays in this Mac login keychain, is not added to system trust, and helps Accessibility permission survive app updates.\n'
+      printf 'This is not Apple notarization and does not make downloads trusted on other Macs.\n\n'
+      read -r -p 'Create and use this local signing identity? [Y/n] ' answer
+      case "$answer" in
+        ''|y|Y|yes|YES|Yes)
+          ;;
+        *)
+          warn "Stable local signing was skipped. A future rebuild may require Accessibility permission again."
+          return
+          ;;
+      esac
+      ;;
+  esac
+
+  info "Configuring the stable local signing identity"
+  identity="$($SOURCE_DIR/menubar/script/local_signing.sh ensure)"
+  export CODEX_PHONE_UPLOAD_SIGNING_IDENTITY="$identity"
+  printf 'The first build may show a Keychain dialog for “%s”.\n' "$LOCAL_SIGNING_NAME"
+  printf 'Enter your Mac login password and choose “Always Allow” once. Do not approve prompts for unrelated items.\n'
+}
+
 [[ "$(uname -s)" == "Darwin" ]] || fail "Codex Phone Upload currently supports macOS only."
 command -v git >/dev/null 2>&1 || fail "Git is required. Install Xcode Command Line Tools, then run this command again."
 
@@ -66,6 +120,7 @@ else
 fi
 
 install_cloudflared_if_possible
+configure_local_signing
 
 if [[ -e "$SKILL_LINK" && ! -L "$SKILL_LINK" ]]; then
   fail "$SKILL_LINK already exists and is not a symbolic link. Move it aside and retry."
