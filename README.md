@@ -29,6 +29,23 @@ It removes the usual detour through WeChat File Transfer, AirDrop, or saving ima
 
 ## Screenshots
 
+### Mac app
+
+The app stays compact and shows compatibility diagnostics only when something fails. Real QR codes are intentionally omitted from the repository because each one contains a private temporary upload link.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/mac-diagnostics-zh.jpg" alt="Chinese macOS app showing first-time Accessibility guidance and Copy diagnostics" width="280"></td>
+    <td align="center"><img src="docs/images/mac-diagnostics-en.jpg" alt="English macOS app showing first-time Accessibility guidance and Copy diagnostics" width="280"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Chinese macOS interface</strong><br>Local and public modes with failure diagnostics</td>
+    <td align="center"><strong>English macOS interface</strong><br>The same privacy-safe troubleshooting flow</td>
+  </tr>
+</table>
+
+### Phone upload page
+
 These are real phone captures from a successful same-Wi-Fi session.
 
 <table>
